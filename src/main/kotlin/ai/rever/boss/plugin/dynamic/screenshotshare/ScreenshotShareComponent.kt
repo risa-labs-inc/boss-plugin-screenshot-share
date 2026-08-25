@@ -2,7 +2,6 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.api.PanelComponentWithUI
 import ai.rever.boss.plugin.api.PanelInfo
-import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -23,12 +22,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
 import androidx.compose.material.Tab
 import androidx.compose.material.TabRow
 import androidx.compose.material.Text
@@ -46,13 +43,16 @@ import com.arkivanov.decompose.ComponentContext
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Crop
 import compose.icons.feathericons.Monitor
-import java.awt.image.BufferedImage
-import kotlinx.coroutines.launch
+
+// Mirrors the default bindings registered in ScreenshotShareDynamicPlugin.shortcuts() -- shown
+// as a hint only, so it doesn't track a user's rebind/unbind of those shortcuts in Settings.
+private val CAPTURE_REGION_SHORTCUT = if (isMacOs()) "⌘⇧C" else "Ctrl+Shift+C"
+private val CAPTURE_FULL_SCREEN_SHORTCUT = if (isMacOs()) "⌘⇧M" else "Ctrl+Shift+M"
+private fun isMacOs() = System.getProperty("os.name").lowercase().contains("mac")
 
 class ScreenshotShareComponent(
     ctx: ComponentContext,
     override val panelInfo: PanelInfo,
-    private val pluginContext: PluginContext,
     private val viewModel: ScreenshotShareViewModel,
 ) : PanelComponentWithUI, ComponentContext by ctx {
 
@@ -65,53 +65,33 @@ class ScreenshotShareComponent(
     override fun Content() {
         BossTheme {
             var tab by remember { mutableStateOf(0) }
-            var capturing by remember { mutableStateOf(false) }
+            val capturing by viewModel.capturing.collectAsState()
             val received by viewModel.received.collectAsState()
             val sent by viewModel.sent.collectAsState()
             val unread by viewModel.unreadCount.collectAsState()
             val error by viewModel.loadError.collectAsState()
 
-            fun captureAndOpen(capture: suspend () -> BufferedImage?) {
-                capturing = true
-                val provider = pluginContext.screenCaptureProvider
-                pluginContext.pluginScope.launch {
-                    if (provider != null && !provider.hasPermission()) {
-                        provider.requestPermission()
-                    }
-                    val image = capture()
-                    capturing = false
-                    if (image != null) {
-                        openAnnotationWindow(
-                            api = ScreenshotShareApi(pluginContext),
-                            scope = pluginContext.pluginScope,
-                            capturedImage = image,
-                            onSent = { viewModel.refreshAsync() },
-                        )
-                    }
-                }
-            }
-
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TooltipArea(
-                        tooltip = { CaptureTooltip(if (capturing) "Selecting…" else "New Screenshot: select a region of your screen to capture") },
+                        tooltip = { Tooltip(if (capturing) "Selecting…" else "New Screenshot: select a region of your screen to capture") },
                         modifier = Modifier.weight(1f),
                     ) {
                         Button(
                             enabled = !capturing,
-                            onClick = { captureAndOpen { ScreenshotCapture.captureRegion() } },
+                            onClick = { viewModel.captureRegion() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(FeatherIcons.Crop, contentDescription = "New Screenshot", modifier = Modifier.size(16.dp))
                         }
                     }
                     TooltipArea(
-                        tooltip = { CaptureTooltip("Full Screen: capture your entire screen") },
+                        tooltip = { Tooltip("Full Screen: capture your entire screen") },
                         modifier = Modifier.weight(1f),
                     ) {
                         Button(
                             enabled = !capturing,
-                            onClick = { captureAndOpen { ScreenshotCapture.captureFullScreen() } },
+                            onClick = { viewModel.captureFullScreen() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(FeatherIcons.Monitor, contentDescription = "Full Screen", modifier = Modifier.size(16.dp))
@@ -134,22 +114,17 @@ class ScreenshotShareComponent(
 
                 Box(Modifier.fillMaxSize()) {
                     if (tab == 0) {
-                        if (received.isEmpty()) {
-                            EmptyState("No screenshots yet")
-                        } else {
-                            LazyColumn {
-                                items(received, key = { it.id }) { item ->
-                                    ReceivedRow(item) { viewModel.openReceived(item.id) }
-                                }
-                            }
+                        ScreenshotList(
+                            received,
+                            "No screenshots yet",
+                            emptySubtext = "$CAPTURE_REGION_SHORTCUT to capture a region, $CAPTURE_FULL_SCREEN_SHORTCUT for the full screen",
+                            key = { it.id },
+                        ) { item ->
+                            ReceivedRow(item) { viewModel.openReceived(item.id) }
                         }
                     } else {
-                        if (sent.isEmpty()) {
-                            EmptyState("You haven't sent anything yet")
-                        } else {
-                            LazyColumn {
-                                items(sent, key = { it.id }) { item -> SentRow(item) }
-                            }
+                        ScreenshotList(sent, "You haven't sent anything yet", key = { it.id }) { item ->
+                            SentRow(item)
                         }
                     }
                 }
@@ -159,27 +134,51 @@ class ScreenshotShareComponent(
 }
 
 @Composable
-private fun CaptureTooltip(text: String) {
-    Surface(shape = RoundedCornerShape(6.dp), color = BossThemeColors.SurfaceColor, elevation = 4.dp) {
-        Text(
-            text,
-            style = MaterialTheme.typography.caption,
-            color = BossThemeColors.TextPrimary,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        )
+private fun EmptyState(message: String, subtext: String? = null) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(message, color = BossThemeColors.TextPrimary)
+            subtext?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextMuted)
+            }
+        }
     }
 }
 
+/** Inbox/Sent tab body: an empty-state message (with an optional [emptySubtext]), or the list keyed by [key]. */
 @Composable
-private fun EmptyState(message: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(message, color = BossThemeColors.TextPrimary)
+private fun <T> ScreenshotList(
+    items: List<T>,
+    emptyMessage: String,
+    emptySubtext: String? = null,
+    key: (T) -> Any,
+    row: @Composable (T) -> Unit,
+) {
+    if (items.isEmpty()) {
+        EmptyState(emptyMessage, emptySubtext)
+    } else {
+        LazyColumn { items(items, key = key) { row(it) } }
     }
+}
+
+/** Shared layout for an inbox/sent list entry: a headline, an optional note, the timestamp, then a divider. */
+@Composable
+private fun ScreenshotRow(note: String?, createdAt: String, onClick: (() -> Unit)? = null, headline: @Composable () -> Unit) {
+    val rowModifier = Modifier.fillMaxWidth()
+        .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+        .padding(vertical = 8.dp)
+    Column(rowModifier) {
+        headline()
+        note?.let { Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary) }
+        Text(createdAt, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary)
+    }
+    Divider()
 }
 
 @Composable
 private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp)) {
+    ScreenshotRow(note = item.note, createdAt = item.createdAt, onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (item.isUnread) {
                 Box(Modifier.size(8.dp).background(Color(0xFF0A84FF), CircleShape))
@@ -187,22 +186,16 @@ private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit) {
             }
             Text(item.senderEmail, style = MaterialTheme.typography.subtitle2, color = BossThemeColors.TextPrimary)
         }
-        item.note?.let { Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary) }
-        Text(item.createdAt, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary)
     }
-    Divider()
 }
 
 @Composable
 private fun SentRow(item: SentScreenshot) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    ScreenshotRow(note = item.note, createdAt = item.createdAt) {
         Text(
             "To ${item.recipientEmail}" + if (item.readAt != null) " · read" else " · unread",
             style = MaterialTheme.typography.subtitle2,
             color = BossThemeColors.TextPrimary,
         )
-        item.note?.let { Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary) }
-        Text(item.createdAt, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary)
     }
-    Divider()
 }

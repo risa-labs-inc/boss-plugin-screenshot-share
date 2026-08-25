@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.util.Base64
 import javax.imageio.ImageIO
@@ -32,6 +33,9 @@ class ScreenshotShareViewModel(
 
     private val _loadError = MutableStateFlow<String?>(null)
     val loadError: StateFlow<String?> = _loadError.asStateFlow()
+
+    private val _capturing = MutableStateFlow(false)
+    val capturing: StateFlow<Boolean> = _capturing.asStateFlow()
 
     private var started = false
 
@@ -60,6 +64,38 @@ class ScreenshotShareViewModel(
             .onFailure { _loadError.value = it.message }
 
         api.listSent().onSuccess { _sent.value = it }
+    }
+
+    /** Selects a region of the screen, then opens it for annotation/send. */
+    fun captureRegion() = capture { ScreenshotCapture.captureRegion() }
+
+    /** Captures the whole screen, then opens it for annotation/send. */
+    fun captureFullScreen() = capture { ScreenshotCapture.captureFullScreen() }
+
+    /**
+     * Shared by the panel's capture buttons and the global hotkey
+     * (see [ScreenshotShareDynamicPlugin]) so both paths request permission,
+     * grab the image and hand it to the annotation window the same way.
+     */
+    private fun capture(grab: suspend () -> BufferedImage?) {
+        if (_capturing.value) return
+        _capturing.value = true
+        scope.launch {
+            val provider = context.screenCaptureProvider
+            if (provider != null && !provider.hasPermission()) {
+                provider.requestPermission()
+            }
+            val image = grab()
+            _capturing.value = false
+            if (image != null) {
+                openAnnotationWindow(
+                    api = api,
+                    scope = scope,
+                    capturedImage = image,
+                    onSent = { refreshAsync() },
+                )
+            }
+        }
     }
 
     fun openReceived(shareId: String) {

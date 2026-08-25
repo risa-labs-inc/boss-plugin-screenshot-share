@@ -8,6 +8,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
+import java.awt.Toolkit
 import java.awt.Window
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -28,9 +29,13 @@ import javax.swing.SwingUtilities
  */
 object ScreenshotCapture {
 
+    // Lazy, not eager: a headless environment throws AWTException on construction, and a
+    // failed init isn't cached by `by lazy`, so the next capture attempt retries cleanly.
+    private val robot by lazy { Robot() }
+
     fun captureFullScreen(): BufferedImage {
         val bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
-        return Robot().createScreenCapture(bounds)
+        return robot.createScreenCapture(bounds)
     }
 
     /**
@@ -102,7 +107,14 @@ object ScreenshotCapture {
                             local.width,
                             local.height,
                         )
-                        finish(runCatching { Robot().createScreenCapture(screenRect) }.getOrNull())
+                        // Robot reads the actual screen buffer, and this translucent overlay is
+                        // still part of it until the window manager has actually removed it --
+                        // hiding it in `finish()` (called with the capture already in hand) was
+                        // too late, so every capture came out tinted by the selection dimming.
+                        window.isVisible = false
+                        Toolkit.getDefaultToolkit().sync()
+                        Thread.sleep(60)
+                        finish(runCatching { robot.createScreenCapture(screenRect) }.getOrNull())
                     }
                 },
             )

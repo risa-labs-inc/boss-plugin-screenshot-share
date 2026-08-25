@@ -22,6 +22,21 @@ features will work (`supabase db push` or the normal BossConsole migration deplo
 this plugin's own build depends on it directly — the RPC calls will just fail at runtime with
 "Not authenticated" / a Postgres "function does not exist" error until it's deployed.
 
+## Hotkeys
+
+The plugin registers two global shortcuts via `ShortcutActionProvider`
+(`ScreenshotShareDynamicPlugin`), so a capture can be started without the panel
+being focused or even visible:
+
+- **Cmd/Ctrl+Shift+C** — region capture (same as the panel's Crop button)
+- **Cmd/Ctrl+Shift+M** — full-screen capture (same as the panel's Monitor button)
+
+Both dispatch into `ScreenshotShareViewModel.captureRegion()` /
+`captureFullScreen()`, the same code path the panel buttons use, so permission
+checks and the annotation window behave identically either way. These are
+*default* bindings only — a user can rebind or unbind them in Settings →
+Keymap, where a rebind always wins over the plugin's default.
+
 ## Delivery model
 
 No realtime channel is exposed to plugins, so the inbox panel **polls**

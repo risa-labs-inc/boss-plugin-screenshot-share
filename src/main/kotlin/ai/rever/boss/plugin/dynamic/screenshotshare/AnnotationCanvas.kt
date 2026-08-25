@@ -35,13 +35,14 @@ fun AnnotationCanvas(
     tool: DrawTool,
     color: Color,
     strokeWidthPx: Float,
+    rainbow: Boolean,
     actions: List<DrawAction>,
     onActionsChange: (List<DrawAction>) -> Unit,
     onTextTap: (Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var draft by remember { mutableStateOf<DrawAction?>(null) }
-    // pointerInput below only relaunches when tool/color/strokeWidthPx change, so its
+    // pointerInput below only relaunches when tool/color/strokeWidthPx/rainbow change, so its
     // closure would otherwise capture a stale `actions`/`onActionsChange` from whichever
     // recomposition last (re)started the gesture-detection coroutine -- silently dropping
     // any stroke committed since then. rememberUpdatedState keeps the reads current.
@@ -49,13 +50,13 @@ fun AnnotationCanvas(
     val currentOnActionsChange by rememberUpdatedState(onActionsChange)
 
     Canvas(
-        modifier.pointerInput(tool, color, strokeWidthPx) {
+        modifier.pointerInput(tool, color, strokeWidthPx, rainbow) {
             if (tool == DrawTool.TEXT) {
                 detectTapGestures { offset -> onTextTap(offset) }
             } else {
                 detectDragGestures(
                     onDragStart = { offset ->
-                        draft = DrawAction(tool, color, strokeWidthPx, listOf(offset.x to offset.y))
+                        draft = DrawAction(tool, color, strokeWidthPx, listOf(offset.x to offset.y), isRainbow = rainbow)
                     },
                     onDrag = { change, _ ->
                         val d = draft ?: return@detectDragGestures
@@ -81,16 +82,18 @@ private fun DrawScope.drawMark(action: DrawAction) {
     val pts = action.points
     if (pts.isEmpty()) return
     when (action.tool) {
-        DrawTool.PEN ->
+        DrawTool.PEN -> {
+            val segments = (pts.size - 1).coerceAtLeast(1)
             for (i in 0 until pts.size - 1) {
                 drawLine(
-                    color = action.color,
+                    color = if (action.isRainbow) rainbowColor(i.toFloat() / segments) else action.color,
                     start = Offset(pts[i].first, pts[i].second),
                     end = Offset(pts[i + 1].first, pts[i + 1].second),
                     strokeWidth = action.strokeWidthPx,
                     cap = StrokeCap.Round,
                 )
             }
+        }
         DrawTool.RECTANGLE ->
             if (pts.size >= 2) {
                 val (s, e) = pts
@@ -110,18 +113,35 @@ private fun DrawScope.drawArrow(action: DrawAction, from: Pair<Float, Float>, to
     val start = Offset(from.first, from.second)
     val end = Offset(to.first, to.second)
     drawLine(action.color, start, end, action.strokeWidthPx, cap = StrokeCap.Round)
-    val angle = atan2((end.y - start.y).toDouble(), (end.x - start.x).toDouble())
-    val headLen = 10.0 + action.strokeWidthPx * 2
-    val a1 = Offset(
-        (end.x - headLen * cos(angle - Math.PI / 7)).toFloat(),
-        (end.y - headLen * sin(angle - Math.PI / 7)).toFloat(),
-    )
-    val a2 = Offset(
-        (end.x - headLen * cos(angle + Math.PI / 7)).toFloat(),
-        (end.y - headLen * sin(angle + Math.PI / 7)).toFloat(),
-    )
-    drawLine(action.color, end, a1, action.strokeWidthPx, cap = StrokeCap.Round)
-    drawLine(action.color, end, a2, action.strokeWidthPx, cap = StrokeCap.Round)
+    val (a1, a2) = arrowHeadWings(from, to, action.strokeWidthPx)
+    drawLine(action.color, end, Offset(a1.first, a1.second), action.strokeWidthPx, cap = StrokeCap.Round)
+    drawLine(action.color, end, Offset(a2.first, a2.second), action.strokeWidthPx, cap = StrokeCap.Round)
+}
+
+/**
+ * Cycles through the hue wheel as [progress] (0f..1f, a pen stroke's position from start to end)
+ * increases, shared by the Compose preview ([drawMark]) and the AWT export path
+ * ([flattenAnnotations]) so a rainbow stroke looks the same on screen and in the saved/sent image.
+ */
+private fun rainbowColor(progress: Float): Color = Color.hsv((progress * 360f) % 360f, 0.85f, 1f)
+
+/**
+ * The two wing-tip points of an arrowhead for a line from [from] to [to], shared by the
+ * Compose preview ([drawArrow]) and the AWT export path ([flattenAnnotations]) so the
+ * rendered stroke and the saved/sent image always agree on the arrow's shape.
+ */
+private fun arrowHeadWings(
+    from: Pair<Float, Float>,
+    to: Pair<Float, Float>,
+    strokeWidthPx: Float,
+): Pair<Pair<Float, Float>, Pair<Float, Float>> {
+    val angle = atan2((to.second - from.second).toDouble(), (to.first - from.first).toDouble())
+    val headLen = 10.0 + strokeWidthPx * 2
+    fun wing(sign: Int): Pair<Float, Float> {
+        val wingAngle = angle + sign * Math.PI / 7
+        return (to.first - headLen * cos(wingAngle)).toFloat() to (to.second - headLen * sin(wingAngle)).toFloat()
+    }
+    return wing(-1) to wing(1)
 }
 
 /**
@@ -147,10 +167,13 @@ fun flattenAnnotations(
         val pts = action.points
         if (pts.isEmpty()) continue
         when (action.tool) {
-            DrawTool.PEN ->
+            DrawTool.PEN -> {
+                val segments = (pts.size - 1).coerceAtLeast(1)
                 for (i in 0 until pts.size - 1) {
+                    if (action.isRainbow) g.color = awtColor(rainbowColor(i.toFloat() / segments))
                     g.drawLine(pts[i].first.toInt(), pts[i].second.toInt(), pts[i + 1].first.toInt(), pts[i + 1].second.toInt())
                 }
+            }
             DrawTool.RECTANGLE ->
                 if (pts.size >= 2) {
                     val (s, e) = pts
@@ -165,14 +188,9 @@ fun flattenAnnotations(
                 if (pts.size >= 2) {
                     val (s, e) = pts
                     g.drawLine(s.first.toInt(), s.second.toInt(), e.first.toInt(), e.second.toInt())
-                    val angle = atan2((e.second - s.second).toDouble(), (e.first - s.first).toDouble())
-                    val headLen = 10.0 + action.strokeWidthPx * 2
-                    val a1x = (e.first - headLen * cos(angle - Math.PI / 7)).toInt()
-                    val a1y = (e.second - headLen * sin(angle - Math.PI / 7)).toInt()
-                    val a2x = (e.first - headLen * cos(angle + Math.PI / 7)).toInt()
-                    val a2y = (e.second - headLen * sin(angle + Math.PI / 7)).toInt()
-                    g.drawLine(e.first.toInt(), e.second.toInt(), a1x, a1y)
-                    g.drawLine(e.first.toInt(), e.second.toInt(), a2x, a2y)
+                    val (a1, a2) = arrowHeadWings(s, e, action.strokeWidthPx)
+                    g.drawLine(e.first.toInt(), e.second.toInt(), a1.first.toInt(), a1.second.toInt())
+                    g.drawLine(e.first.toInt(), e.second.toInt(), a2.first.toInt(), a2.second.toInt())
                 }
             DrawTool.TEXT -> Unit
         }

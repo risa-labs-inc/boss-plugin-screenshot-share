@@ -5,12 +5,16 @@ import androidx.compose.ui.graphics.Color
 enum class DrawTool { PEN, RECTANGLE, ARROW, TEXT }
 
 /** A single freehand/rectangle/arrow mark. TEXT is handled separately as [TextAnnotation] --
- * Compose Foundation's DrawScope has no text primitive without a TextMeasurer. */
+ * Compose Foundation's DrawScope has no text primitive without a TextMeasurer.
+ * [isRainbow] only has an effect for [DrawTool.PEN] -- when set, [color] is ignored and each
+ * segment is colored by its position along the stroke instead (see `rainbowColor` in
+ * AnnotationCanvas.kt). */
 data class DrawAction(
     val tool: DrawTool,
     val color: Color,
     val strokeWidthPx: Float,
     val points: List<Pair<Float, Float>>,
+    val isRainbow: Boolean = false,
 )
 
 data class TextAnnotation(

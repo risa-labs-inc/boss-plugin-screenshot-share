@@ -53,11 +53,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -186,6 +188,7 @@ private fun AnnotationEditor(
 ) {
     var tool by remember { mutableStateOf(DrawTool.PEN) }
     var color by remember { mutableStateOf(PALETTE.first()) }
+    var rainbow by remember { mutableStateOf(false) }
     var strokeWidth by remember { mutableStateOf(4f) }
     var actions by remember { mutableStateOf(listOf<DrawAction>()) }
     var texts by remember { mutableStateOf(listOf<TextAnnotation>()) }
@@ -199,6 +202,7 @@ private fun AnnotationEditor(
 
     val bitmap = remember(capturedImage) { capturedImage.toComposeImageBitmap() }
     val density = LocalDensity.current
+    fun flattened() = flattenAnnotations(capturedImage, actions, texts)
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -218,7 +222,8 @@ private fun AnnotationEditor(
             VerticalDivider()
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                PALETTE.forEach { c -> ColorSwatch(c, selected = c == color) { color = c } }
+                PALETTE.forEach { c -> ColorSwatch(c, selected = c == color && !rainbow) { color = c; rainbow = false } }
+                RainbowSwatch(selected = rainbow) { rainbow = true }
             }
 
             VerticalDivider()
@@ -276,6 +281,7 @@ private fun AnnotationEditor(
                     tool = tool,
                     color = color,
                     strokeWidthPx = strokeWidth,
+                    rainbow = rainbow,
                     actions = actions,
                     onActionsChange = { actions = it },
                     onTextTap = { offset -> pendingTextAt = offset; pendingTextValue = "" },
@@ -326,10 +332,10 @@ private fun AnnotationEditor(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ActionIconButton(FeatherIcons.Save, "Save…") {
-                    saveError = saveScreenshotToDisk(flattenAnnotations(capturedImage, actions, texts))
+                    saveError = saveScreenshotToDisk(flattened())
                 }
                 ActionIconButton(FeatherIcons.Copy, "Copy") {
-                    copyError = copyScreenshotToClipboard(flattenAnnotations(capturedImage, actions, texts))
+                    copyError = copyScreenshotToClipboard(flattened())
                 }
                 ActionIconButton(FeatherIcons.Send, "Send", filled = true) { showSendDialog = true }
             }
@@ -346,15 +352,15 @@ private fun AnnotationEditor(
                 sending = true
                 errorText = null
                 scope.launch {
-                    val flattened = flattenAnnotations(capturedImage, actions, texts)
-                    val bytes = ByteArrayOutputStream().also { ImageIO.write(flattened, "png", it) }.toByteArray()
+                    val flattenedImage = flattened()
+                    val bytes = ByteArrayOutputStream().also { ImageIO.write(flattenedImage, "png", it) }.toByteArray()
                     val base64 = Base64.getEncoder().encodeToString(bytes)
                     api.shareScreenshot(
                         recipientId = recipient.userId,
                         imageBase64 = base64,
                         mimeType = "image/png",
-                        width = flattened.width,
-                        height = flattened.height,
+                        width = flattenedImage.width,
+                        height = flattenedImage.height,
                         note = note.ifBlank { null },
                     ).onSuccess {
                         sending = false
@@ -422,55 +428,70 @@ private fun VerticalDivider() {
     Box(Modifier.width(1.dp).height(32.dp).background(BossThemeColors.BorderColor))
 }
 
+/** Shared shape behind [ToolButton] and [ActionIconButton]: a tooltipped, tappable square. */
 @OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ToolbarIconTile(
+    icon: ImageVector,
+    label: String,
+    size: Dp,
+    iconSize: Dp,
+    background: Color,
+    tint: Color,
+    border: BorderStroke?,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    TooltipArea(tooltip = { Tooltip(label) }) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = background,
+            border = border,
+            modifier = Modifier.size(size).clickable(enabled = enabled, onClick = onClick),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(iconSize))
+            }
+        }
+    }
+}
+
 @Composable
 private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
-    TooltipArea(tooltip = { Tooltip(label) }) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = if (selected) BossThemeColors.AccentColor else Color.Transparent,
-            modifier = Modifier.size(40.dp).clickable(onClick = onClick),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    icon,
-                    contentDescription = label,
-                    tint = if (selected) BossThemeColors.BackgroundColor else BossThemeColors.TextSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-    }
+    ToolbarIconTile(
+        icon = icon,
+        label = label,
+        size = 40.dp,
+        iconSize = 18.dp,
+        background = if (selected) BossThemeColors.AccentColor else Color.Transparent,
+        tint = if (selected) BossThemeColors.BackgroundColor else BossThemeColors.TextSecondary,
+        border = null,
+        onClick = onClick,
+    )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ActionIconButton(icon: ImageVector, label: String, enabled: Boolean = true, filled: Boolean = false, onClick: () -> Unit) {
-    TooltipArea(tooltip = { Tooltip(label) }) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = if (filled && enabled) BossThemeColors.AccentColor else Color.Transparent,
-            border = if (filled) null else BorderStroke(1.dp, BossThemeColors.BorderColor),
-            modifier = Modifier.size(36.dp).clickable(enabled = enabled, onClick = onClick),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    icon,
-                    contentDescription = label,
-                    tint = when {
-                        filled && enabled -> BossThemeColors.BackgroundColor
-                        enabled -> BossThemeColors.TextSecondary
-                        else -> BossThemeColors.TextMuted
-                    },
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-    }
+    ToolbarIconTile(
+        icon = icon,
+        label = label,
+        size = 36.dp,
+        iconSize = 16.dp,
+        background = if (filled && enabled) BossThemeColors.AccentColor else Color.Transparent,
+        tint = when {
+            filled && enabled -> BossThemeColors.BackgroundColor
+            enabled -> BossThemeColors.TextSecondary
+            else -> BossThemeColors.TextMuted
+        },
+        border = if (filled) null else BorderStroke(1.dp, BossThemeColors.BorderColor),
+        enabled = enabled,
+        onClick = onClick,
+    )
 }
 
+/** Small tooltip bubble, shared with [ScreenshotShareComponent]'s capture buttons. */
 @Composable
-private fun Tooltip(text: String) {
+internal fun Tooltip(text: String) {
     Surface(shape = RoundedCornerShape(6.dp), color = BossThemeColors.SurfaceColor, elevation = 4.dp) {
         Text(
             text,
@@ -487,6 +508,24 @@ private fun ColorSwatch(color: Color, selected: Boolean, onClick: () -> Unit) {
         Modifier
             .size(26.dp)
             .background(color, shape = CircleShape)
+            .border(1.dp, BossThemeColors.BorderColor, CircleShape)
+            .then(if (selected) Modifier.border(2.dp, BossThemeColors.AccentColor, CircleShape) else Modifier)
+            .clickable(onClick = onClick),
+    )
+}
+
+/** Palette entry for [DrawTool.PEN]'s rainbow mode -- see [DrawAction.isRainbow]. */
+@Composable
+private fun RainbowSwatch(selected: Boolean, onClick: () -> Unit) {
+    val brush = remember {
+        Brush.sweepGradient(
+            listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red),
+        )
+    }
+    Box(
+        Modifier
+            .size(26.dp)
+            .background(brush, shape = CircleShape)
             .border(1.dp, BossThemeColors.BorderColor, CircleShape)
             .then(if (selected) Modifier.border(2.dp, BossThemeColors.AccentColor, CircleShape) else Modifier)
             .clickable(onClick = onClick),

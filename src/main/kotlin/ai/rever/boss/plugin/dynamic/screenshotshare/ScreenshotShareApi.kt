@@ -38,6 +38,13 @@ class ScreenshotShareApi(private val context: PluginContext) {
         return obj
     }
 
+    /** Required string field, e.g. `o.str("user_id")` for `o["user_id"]!!.jsonPrimitive.content`. */
+    private fun JsonObject.str(key: String): String = this[key]!!.jsonPrimitive.content
+
+    private fun JsonObject.strOrNull(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.intOrNull(key: String): Int? = this[key]?.jsonPrimitive?.intOrNull
+
     suspend fun listShareableRecipients(query: String? = null): Result<List<Recipient>> =
         rpc(
             "list_shareable_recipients",
@@ -49,10 +56,10 @@ class ScreenshotShareApi(private val context: PluginContext) {
             requireSuccess(obj)["data"]!!.jsonArray.map { el ->
                 val o = el.jsonObject
                 Recipient(
-                    userId = o["user_id"]!!.jsonPrimitive.content,
-                    email = o["email"]!!.jsonPrimitive.content,
-                    orgId = o["org_id"]!!.jsonPrimitive.content,
-                    orgName = o["org_name"]!!.jsonPrimitive.content,
+                    userId = o.str("user_id"),
+                    email = o.str("email"),
+                    orgId = o.str("org_id"),
+                    orgName = o.str("org_name"),
                 )
             }
         }
@@ -76,7 +83,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
                 put("p_note", note)
             },
         ).mapCatching { obj ->
-            requireSuccess(obj)["share_id"]?.jsonPrimitive?.content ?: error("Missing share_id in response")
+            requireSuccess(obj).strOrNull("share_id") ?: error("Missing share_id in response")
         }
 
     suspend fun listReceived(onlyUnread: Boolean = false): Result<List<ReceivedScreenshot>> =
@@ -90,14 +97,14 @@ class ScreenshotShareApi(private val context: PluginContext) {
             requireSuccess(obj)["data"]!!.jsonArray.map { el ->
                 val o = el.jsonObject
                 ReceivedScreenshot(
-                    id = o["id"]!!.jsonPrimitive.content,
-                    senderId = o["sender_id"]!!.jsonPrimitive.content,
-                    senderEmail = o["sender_email"]!!.jsonPrimitive.content,
-                    note = o["note"]?.jsonPrimitive?.contentOrNull,
-                    width = o["width"]?.jsonPrimitive?.intOrNull,
-                    height = o["height"]?.jsonPrimitive?.intOrNull,
-                    createdAt = o["created_at"]!!.jsonPrimitive.content,
-                    readAt = o["read_at"]?.jsonPrimitive?.contentOrNull,
+                    id = o.str("id"),
+                    senderId = o.str("sender_id"),
+                    senderEmail = o.str("sender_email"),
+                    note = o.strOrNull("note"),
+                    width = o.intOrNull("width"),
+                    height = o.intOrNull("height"),
+                    createdAt = o.str("created_at"),
+                    readAt = o.strOrNull("read_at"),
                 )
             }
         }
@@ -107,14 +114,14 @@ class ScreenshotShareApi(private val context: PluginContext) {
             requireSuccess(obj)["data"]!!.jsonArray.map { el ->
                 val o = el.jsonObject
                 SentScreenshot(
-                    id = o["id"]!!.jsonPrimitive.content,
-                    recipientId = o["recipient_id"]!!.jsonPrimitive.content,
-                    recipientEmail = o["recipient_email"]!!.jsonPrimitive.content,
-                    note = o["note"]?.jsonPrimitive?.contentOrNull,
-                    width = o["width"]?.jsonPrimitive?.intOrNull,
-                    height = o["height"]?.jsonPrimitive?.intOrNull,
-                    createdAt = o["created_at"]!!.jsonPrimitive.content,
-                    readAt = o["read_at"]?.jsonPrimitive?.contentOrNull,
+                    id = o.str("id"),
+                    recipientId = o.str("recipient_id"),
+                    recipientEmail = o.str("recipient_email"),
+                    note = o.strOrNull("note"),
+                    width = o.intOrNull("width"),
+                    height = o.intOrNull("height"),
+                    createdAt = o.str("created_at"),
+                    readAt = o.strOrNull("read_at"),
                 )
             }
         }
@@ -123,8 +130,6 @@ class ScreenshotShareApi(private val context: PluginContext) {
     suspend fun getImage(shareId: String): Result<Pair<String, String>> =
         rpc("get_screenshot_image", buildJsonObject { put("p_share_id", shareId) }).mapCatching { obj ->
             val o = requireSuccess(obj)
-            val base64 = o["image_base64"]!!.jsonPrimitive.content
-            val mime = o["mime_type"]!!.jsonPrimitive.content
-            base64 to mime
+            o.str("image_base64") to o.str("mime_type")
         }
 }
