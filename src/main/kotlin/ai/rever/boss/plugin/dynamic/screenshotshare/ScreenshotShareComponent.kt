@@ -5,6 +5,8 @@ import ai.rever.boss.plugin.api.PanelInfo
 import ai.rever.boss.plugin.api.PluginContext
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,9 +23,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Divider
+import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Surface
 import androidx.compose.material.Tab
 import androidx.compose.material.TabRow
 import androidx.compose.material.Text
@@ -38,6 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Crop
+import compose.icons.feathericons.Monitor
 import java.awt.image.BufferedImage
 import kotlinx.coroutines.launch
 
@@ -52,6 +60,7 @@ class ScreenshotShareComponent(
         viewModel.startPolling()
     }
 
+    @OptIn(ExperimentalFoundationApi::class)
     @Composable
     override fun Content() {
         BossTheme {
@@ -84,19 +93,29 @@ class ScreenshotShareComponent(
 
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = !capturing,
-                        onClick = { captureAndOpen { ScreenshotCapture.captureRegion() } },
+                    TooltipArea(
+                        tooltip = { CaptureTooltip(if (capturing) "Selecting…" else "New Screenshot: select a region of your screen to capture") },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text(if (capturing) "Selecting…" else "New Screenshot")
+                        Button(
+                            enabled = !capturing,
+                            onClick = { captureAndOpen { ScreenshotCapture.captureRegion() } },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(FeatherIcons.Crop, contentDescription = "New Screenshot", modifier = Modifier.size(16.dp))
+                        }
                     }
-                    Button(
-                        enabled = !capturing,
-                        onClick = { captureAndOpen { ScreenshotCapture.captureFullScreen() } },
+                    TooltipArea(
+                        tooltip = { CaptureTooltip("Full Screen: capture your entire screen") },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Full Screen")
+                        Button(
+                            enabled = !capturing,
+                            onClick = { captureAndOpen { ScreenshotCapture.captureFullScreen() } },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(FeatherIcons.Monitor, contentDescription = "Full Screen", modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
 
@@ -136,6 +155,18 @@ class ScreenshotShareComponent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CaptureTooltip(text: String) {
+    Surface(shape = RoundedCornerShape(6.dp), color = BossThemeColors.SurfaceColor, elevation = 4.dp) {
+        Text(
+            text,
+            style = MaterialTheme.typography.caption,
+            color = BossThemeColors.TextPrimary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 

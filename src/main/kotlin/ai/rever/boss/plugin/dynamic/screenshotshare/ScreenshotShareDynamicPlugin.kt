@@ -5,7 +5,7 @@ import ai.rever.boss.plugin.api.PluginContext
 
 class ScreenshotShareDynamicPlugin : DynamicPlugin {
     override val pluginId = "ai.rever.boss.plugin.dynamic.screenshotshare"
-    override val displayName = "Screenshot Share"
+    override val displayName = "Secure Grab"
     override val version = "0.1.0"
     override val description = "Capture, annotate, and send screenshots to teammates in your BOSS organisation."
     override val author = "Your Name"

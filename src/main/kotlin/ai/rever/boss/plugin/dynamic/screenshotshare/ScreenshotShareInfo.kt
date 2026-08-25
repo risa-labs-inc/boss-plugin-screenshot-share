@@ -10,7 +10,7 @@ import compose.icons.feathericons.Camera
 
 object ScreenshotShareInfo : PanelInfo {
     override val id = PanelId("screenshot-share", 60)
-    override val displayName = "Screenshot Share"
+    override val displayName = "Secure Grab"
     override val icon = FeatherIcons.Camera
     // Matches the other right-dock plugins (secret-manager, organisation), which both
     // register at right.top.bottom -- a lone right.top never showed up in that dock.

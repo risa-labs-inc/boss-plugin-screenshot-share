@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,7 +35,6 @@ import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedButton
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.RadioButton
 import androidx.compose.material.Slider
@@ -111,13 +109,13 @@ fun openAnnotationWindow(
     onSent: () -> Unit,
 ) {
     SwingUtilities.invokeLater {
-        val frame = JFrame("Annotate Screenshot")
+        val frame = JFrame("Annotate Screenshot — Secure Grab")
         frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
         val panel = ComposePanel()
         frame.contentPane.add(panel)
         frame.setSize(
-            (capturedImage.width + 220).coerceIn(640, 1600),
-            (capturedImage.height + 160).coerceIn(480, 1200),
+            (capturedImage.width + 48).coerceIn(760, 1600),
+            (capturedImage.height + 200).coerceIn(560, 1200),
         )
         frame.setLocationRelativeTo(null)
 
@@ -142,7 +140,7 @@ fun openAnnotationWindow(
 /** Opens a plain, read-only viewer window for an already-received screenshot. */
 fun openViewerWindow(image: BufferedImage) {
     SwingUtilities.invokeLater {
-        val frame = JFrame("Screenshot")
+        val frame = JFrame("Screenshot — Secure Grab")
         frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
         val panel = ComposePanel()
         frame.contentPane.add(panel)
@@ -188,36 +186,43 @@ private fun AnnotationEditor(
     val bitmap = remember(capturedImage) { capturedImage.toComposeImageBitmap() }
     val density = LocalDensity.current
 
-    Row(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.fillMaxHeight().width(224.dp).background(BossThemeColors.SurfaceColor).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().background(BossThemeColors.SurfaceColor)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionLabel("Tool")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToolButton(FeatherIcons.Edit3, "Pen", selected = tool == DrawTool.PEN) { tool = DrawTool.PEN }
-                    ToolButton(FeatherIcons.Square, "Rectangle", selected = tool == DrawTool.RECTANGLE) { tool = DrawTool.RECTANGLE }
-                    ToolButton(FeatherIcons.CornerUpRight, "Arrow", selected = tool == DrawTool.ARROW) { tool = DrawTool.ARROW }
-                    ToolButton(FeatherIcons.Type, "Text", selected = tool == DrawTool.TEXT) { tool = DrawTool.TEXT }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ToolButton(FeatherIcons.Edit3, "Pen", selected = tool == DrawTool.PEN) { tool = DrawTool.PEN }
+                ToolButton(FeatherIcons.Square, "Rectangle", selected = tool == DrawTool.RECTANGLE) { tool = DrawTool.RECTANGLE }
+                ToolButton(FeatherIcons.CornerUpRight, "Arrow", selected = tool == DrawTool.ARROW) { tool = DrawTool.ARROW }
+                ToolButton(FeatherIcons.Type, "Text", selected = tool == DrawTool.TEXT) { tool = DrawTool.TEXT }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionLabel("Color")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PALETTE.forEach { c -> ColorSwatch(c, selected = c == color) { color = c } }
-                }
+            VerticalDivider()
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                PALETTE.forEach { c -> ColorSwatch(c, selected = c == color) { color = c } }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionLabel("Stroke · ${strokeWidth.toInt()}px")
-                Slider(value = strokeWidth, onValueChange = { strokeWidth = it }, valueRange = 1f..16f)
+            VerticalDivider()
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Stroke", style = MaterialTheme.typography.caption, color = BossThemeColors.TextMuted)
+                Slider(
+                    value = strokeWidth,
+                    onValueChange = { strokeWidth = it },
+                    valueRange = 1f..16f,
+                    modifier = Modifier.width(90.dp),
+                )
+                Text("${strokeWidth.toInt()}px", style = MaterialTheme.typography.caption, color = BossThemeColors.TextMuted)
             }
 
-            Divider(color = BossThemeColors.BorderColor)
+            VerticalDivider()
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ActionIconButton(FeatherIcons.RotateCcw, "Undo", enabled = actions.isNotEmpty()) {
                     actions = actions.dropLast(1)
                 }
@@ -227,54 +232,27 @@ private fun AnnotationEditor(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(
-                    onClick = { saveError = saveScreenshotToDisk(flattenAnnotations(capturedImage, actions, texts)) },
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(FeatherIcons.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Save…")
-                }
-                saveError?.let { Text(it, color = BossThemeColors.ErrorColor, style = MaterialTheme.typography.caption) }
+            VerticalDivider()
 
-                OutlinedButton(
-                    onClick = { copyError = copyScreenshotToClipboard(flattenAnnotations(capturedImage, actions, texts)) },
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(FeatherIcons.Copy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Copy")
-                }
-                copyError?.let { Text(it, color = BossThemeColors.ErrorColor, style = MaterialTheme.typography.caption) }
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
-                    Icon(FeatherIcons.X, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Cancel")
-                }
-                Button(
-                    onClick = { showSendDialog = true },
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(FeatherIcons.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Send")
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ActionIconButton(FeatherIcons.X, "Cancel", onClick = onCancel)
             }
         }
 
-        Box(Modifier.fillMaxHeight().width(1.dp).background(BossThemeColors.BorderColor))
+        (saveError ?: copyError)?.let {
+            Text(
+                it,
+                color = BossThemeColors.ErrorColor,
+                style = MaterialTheme.typography.caption,
+                modifier = Modifier.fillMaxWidth().background(BossThemeColors.SurfaceColor)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+
+        Divider(color = BossThemeColors.BorderColor)
 
         Box(
-            Modifier.weight(1f).fillMaxHeight().background(BossThemeColors.BackgroundColor)
+            Modifier.weight(1f).fillMaxWidth().background(BossThemeColors.BackgroundColor)
                 .verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center,
         ) {
@@ -322,6 +300,24 @@ private fun AnnotationEditor(
                         }
                     }
                 }
+            }
+        }
+
+        Divider(color = BossThemeColors.BorderColor)
+
+        Row(
+            Modifier.fillMaxWidth().background(BossThemeColors.SurfaceColor)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ActionIconButton(FeatherIcons.Save, "Save…") {
+                    saveError = saveScreenshotToDisk(flattenAnnotations(capturedImage, actions, texts))
+                }
+                ActionIconButton(FeatherIcons.Copy, "Copy") {
+                    copyError = copyScreenshotToClipboard(flattenAnnotations(capturedImage, actions, texts))
+                }
+                ActionIconButton(FeatherIcons.Send, "Send", filled = true) { showSendDialog = true }
             }
         }
     }
@@ -402,8 +398,8 @@ private class ImageTransferable(private val image: BufferedImage) : Transferable
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(text, style = MaterialTheme.typography.overline, color = BossThemeColors.TextMuted)
+private fun VerticalDivider() {
+    Box(Modifier.width(1.dp).height(32.dp).background(BossThemeColors.BorderColor))
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -429,19 +425,23 @@ private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, onCl
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ActionIconButton(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun ActionIconButton(icon: ImageVector, label: String, enabled: Boolean = true, filled: Boolean = false, onClick: () -> Unit) {
     TooltipArea(tooltip = { Tooltip(label) }) {
         Surface(
             shape = RoundedCornerShape(10.dp),
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, BossThemeColors.BorderColor),
+            color = if (filled && enabled) BossThemeColors.AccentColor else Color.Transparent,
+            border = if (filled) null else BorderStroke(1.dp, BossThemeColors.BorderColor),
             modifier = Modifier.size(36.dp).clickable(enabled = enabled, onClick = onClick),
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     icon,
                     contentDescription = label,
-                    tint = if (enabled) BossThemeColors.TextSecondary else BossThemeColors.TextMuted,
+                    tint = when {
+                        filled && enabled -> BossThemeColors.BackgroundColor
+                        enabled -> BossThemeColors.TextSecondary
+                        else -> BossThemeColors.TextMuted
+                    },
                     modifier = Modifier.size(16.dp),
                 )
             }

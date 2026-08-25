@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -40,6 +41,12 @@ fun AnnotationCanvas(
     modifier: Modifier = Modifier,
 ) {
     var draft by remember { mutableStateOf<DrawAction?>(null) }
+    // pointerInput below only relaunches when tool/color/strokeWidthPx change, so its
+    // closure would otherwise capture a stale `actions`/`onActionsChange` from whichever
+    // recomposition last (re)started the gesture-detection coroutine -- silently dropping
+    // any stroke committed since then. rememberUpdatedState keeps the reads current.
+    val currentActions by rememberUpdatedState(actions)
+    val currentOnActionsChange by rememberUpdatedState(onActionsChange)
 
     Canvas(
         modifier.pointerInput(tool, color, strokeWidthPx) {
@@ -56,7 +63,7 @@ fun AnnotationCanvas(
                         draft = if (tool == DrawTool.PEN) d.copy(points = d.points + pt) else d.copy(points = listOf(d.points.first(), pt))
                     },
                     onDragEnd = {
-                        draft?.let { onActionsChange(actions + it) }
+                        draft?.let { currentOnActionsChange(currentActions + it) }
                         draft = null
                     },
                     onDragCancel = { draft = null },
