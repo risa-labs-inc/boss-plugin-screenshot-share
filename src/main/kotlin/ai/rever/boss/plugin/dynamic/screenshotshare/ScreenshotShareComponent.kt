@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
 import compose.icons.FeatherIcons
@@ -140,7 +141,13 @@ private fun EmptyState(message: String, subtext: String? = null) {
             Text(message, color = BossThemeColors.TextPrimary)
             subtext?.let {
                 Spacer(Modifier.height(4.dp))
-                Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextMuted)
+                Text(
+                    it,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.caption,
+                    color = BossThemeColors.TextMuted,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
