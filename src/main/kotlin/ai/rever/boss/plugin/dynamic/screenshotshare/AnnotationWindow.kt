@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
+import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -44,7 +45,6 @@ import androidx.compose.material.TextButton
 import androidx.compose.material.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +54,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -121,22 +120,21 @@ fun openAnnotationWindow(
         )
         frame.setLocationRelativeTo(null)
 
+        // Must run before the frame is realized (setVisible below): the native NSWindow
+        // picks up its title-bar chrome at peer-creation time, so setting this property
+        // from a Compose SideEffect -- which only fires once the first frame has composed,
+        // i.e. after the peer already exists -- left the title bar stuck on macOS's default
+        // light chrome regardless of app theme.
+        if (System.getProperty("os.name").lowercase().contains("mac")) {
+            val isDark = !BossThemeController.current.isLight
+            frame.rootPane.putClientProperty(
+                "apple.awt.windowAppearance",
+                if (isDark) "NSAppearanceNameDarkAqua" else "NSAppearanceNameAqua",
+            )
+        }
+
         panel.setContent {
             BossTheme {
-                // Plugins only see BossThemeColors (Composable-only getters), not the host's
-                // BossThemeController -- so the dark/light call has to be read here, inside the
-                // composition, and pushed out to the AWT frame as a plain value. Without this the
-                // native title bar stays macOS's default light chrome regardless of app theme.
-                val backgroundColor = BossThemeColors.BackgroundColor
-                SideEffect {
-                    if (System.getProperty("os.name").lowercase().contains("mac")) {
-                        val isDark = backgroundColor.luminance() < 0.5f
-                        frame.rootPane.putClientProperty(
-                            "apple.awt.windowAppearance",
-                            if (isDark) "NSAppearanceNameDarkAqua" else "NSAppearanceNameAqua",
-                        )
-                    }
-                }
                 AnnotationEditor(
                     capturedImage = capturedImage,
                     api = api,
