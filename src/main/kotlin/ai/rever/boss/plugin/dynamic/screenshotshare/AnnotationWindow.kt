@@ -355,6 +355,12 @@ private fun AnnotationEditor(
     }
 }
 
+private val FRUIT_NAMES = listOf(
+    "apple", "banana", "cherry", "dragonfruit", "elderberry", "fig", "grape", "honeydew",
+    "kiwi", "lemon", "mango", "nectarine", "orange", "papaya", "quince", "raspberry",
+    "starfruit", "tangerine", "watermelon",
+)
+
 /**
  * Shows a native save-file dialog and writes [image] to the chosen path as PNG.
  * Returns an error message on failure, or `null` on success or user cancellation.
@@ -363,7 +369,7 @@ private fun saveScreenshotToDisk(image: BufferedImage): String? {
     val chooser = JFileChooser().apply {
         dialogTitle = "Save Screenshot"
         fileFilter = FileNameExtensionFilter("PNG Image", "png")
-        selectedFile = File("screenshot.png")
+        selectedFile = File("${FRUIT_NAMES.random()}.png")
     }
     if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
     val chosen = chooser.selectedFile
