@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "ai.rever.boss.plugin.dynamic.screenshotshare",
+  "displayName": "Screenshot Share",
+  "version": "0.1.0",
+  "apiVersion": "1.0.84",
+  "minBossVersion": "9.2.20",
+  "mainClass": "ai.rever.boss.plugin.dynamic.screenshotshare.ScreenshotShareDynamicPlugin",
+  "type": "panel",
+  "panel": { "icon": "Camera", "location": "right.top", "order": 60 },
+  "requiredPermissions": [],
+  "definedPermissions": [],
+  "description": "Capture a screenshot, annotate it, and send it to a teammate in one of your organisations.",
+  "author": "Your Name",
+  "url": "https://github.com/risa-labs-inc/boss-plugin-screenshot-share"
+}
