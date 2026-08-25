@@ -7,7 +7,7 @@
   "minBossVersion": "9.2.20",
   "mainClass": "ai.rever.boss.plugin.dynamic.screenshotshare.ScreenshotShareDynamicPlugin",
   "type": "panel",
-  "panel": { "icon": "Camera", "location": "right.top", "order": 60 },
+  "panel": { "position": "right_top_bottom", "priority": 60 },
   "requiredPermissions": [],
   "definedPermissions": [],
   "description": "Capture a screenshot, annotate it, and send it to a teammate in one of your organisations.",
