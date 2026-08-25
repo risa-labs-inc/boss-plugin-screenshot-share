@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.arkivanov.decompose.ComponentContext
+import java.awt.image.BufferedImage
 import kotlinx.coroutines.launch
 
 class ScreenshotShareComponent(
@@ -60,31 +62,42 @@ class ScreenshotShareComponent(
             val unread by viewModel.unreadCount.collectAsState()
             val error by viewModel.loadError.collectAsState()
 
+            fun captureAndOpen(capture: suspend () -> BufferedImage?) {
+                capturing = true
+                val provider = pluginContext.screenCaptureProvider
+                pluginContext.pluginScope.launch {
+                    if (provider != null && !provider.hasPermission()) {
+                        provider.requestPermission()
+                    }
+                    val image = capture()
+                    capturing = false
+                    if (image != null) {
+                        openAnnotationWindow(
+                            api = ScreenshotShareApi(pluginContext),
+                            scope = pluginContext.pluginScope,
+                            capturedImage = image,
+                            onSent = { viewModel.refreshAsync() },
+                        )
+                    }
+                }
+            }
+
             Column(Modifier.fillMaxSize().padding(12.dp)) {
-                Button(
-                    enabled = !capturing,
-                    onClick = {
-                        capturing = true
-                        val provider = pluginContext.screenCaptureProvider
-                        pluginContext.pluginScope.launch {
-                            if (provider != null && !provider.hasPermission()) {
-                                provider.requestPermission()
-                            }
-                            val image = ScreenshotCapture.captureRegion()
-                            capturing = false
-                            if (image != null) {
-                                openAnnotationWindow(
-                                    api = ScreenshotShareApi(pluginContext),
-                                    scope = pluginContext.pluginScope,
-                                    capturedImage = image,
-                                    onSent = { viewModel.refreshAsync() },
-                                )
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (capturing) "Selecting region…" else "New Screenshot")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !capturing,
+                        onClick = { captureAndOpen { ScreenshotCapture.captureRegion() } },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (capturing) "Selecting…" else "New Screenshot")
+                    }
+                    Button(
+                        enabled = !capturing,
+                        onClick = { captureAndOpen { ScreenshotCapture.captureFullScreen() } },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Full Screen")
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))

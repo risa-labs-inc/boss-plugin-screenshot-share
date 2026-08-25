@@ -2,7 +2,10 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,9 +28,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.Divider
+import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
 import androidx.compose.material.OutlinedTextField
@@ -50,19 +57,41 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Check
+import compose.icons.feathericons.Copy
+import compose.icons.feathericons.CornerUpRight
+import compose.icons.feathericons.Edit3
+import compose.icons.feathericons.RotateCcw
+import compose.icons.feathericons.Save
+import compose.icons.feathericons.Send
+import compose.icons.feathericons.Square
+import compose.icons.feathericons.Trash2
+import compose.icons.feathericons.Type
+import compose.icons.feathericons.X
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import java.awt.HeadlessException
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
 import java.util.Base64
 import javax.imageio.ImageIO
+import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
+import javax.swing.filechooser.FileNameExtensionFilter
 
 private val PALETTE = listOf(
     Color.Red, Color(0xFFFFA500), Color(0xFFFFD60A), Color(0xFF34C759), Color(0xFF0A84FF), Color.Black, Color.White,
@@ -153,45 +182,99 @@ private fun AnnotationEditor(
     var showSendDialog by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var copyError by remember { mutableStateOf<String?>(null) }
 
     val bitmap = remember(capturedImage) { capturedImage.toComposeImageBitmap() }
     val density = LocalDensity.current
 
     Row(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxHeight().width(200.dp).background(Color(0xFF2A2A2E)).padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxHeight().width(224.dp).background(BossThemeColors.SurfaceColor).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Text("Tool", color = BossThemeColors.TextPrimary, style = MaterialTheme.typography.subtitle2)
-            DrawTool.entries.forEach { t -> ToolRow(t, selected = tool == t) { tool = t } }
-
-            Spacer(Modifier.height(8.dp))
-            Text("Color", color = BossThemeColors.TextPrimary, style = MaterialTheme.typography.subtitle2)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PALETTE.forEach { c -> ColorSwatch(c, selected = c == color) { color = c } }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel("Tool")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ToolButton(FeatherIcons.Edit3, "Pen", selected = tool == DrawTool.PEN) { tool = DrawTool.PEN }
+                    ToolButton(FeatherIcons.Square, "Rectangle", selected = tool == DrawTool.RECTANGLE) { tool = DrawTool.RECTANGLE }
+                    ToolButton(FeatherIcons.CornerUpRight, "Arrow", selected = tool == DrawTool.ARROW) { tool = DrawTool.ARROW }
+                    ToolButton(FeatherIcons.Type, "Text", selected = tool == DrawTool.TEXT) { tool = DrawTool.TEXT }
+                }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text("Stroke: ${strokeWidth.toInt()}px", color = BossThemeColors.TextPrimary)
-            Slider(value = strokeWidth, onValueChange = { strokeWidth = it }, valueRange = 1f..16f)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionLabel("Color")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PALETTE.forEach { c -> ColorSwatch(c, selected = c == color) { color = c } }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionLabel("Stroke · ${strokeWidth.toInt()}px")
+                Slider(value = strokeWidth, onValueChange = { strokeWidth = it }, valueRange = 1f..16f)
+            }
+
+            Divider(color = BossThemeColors.BorderColor)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ActionIconButton(FeatherIcons.RotateCcw, "Undo", enabled = actions.isNotEmpty()) {
+                    actions = actions.dropLast(1)
+                }
+                ActionIconButton(FeatherIcons.Trash2, "Clear", enabled = actions.isNotEmpty() || texts.isNotEmpty()) {
+                    actions = emptyList()
+                    texts = emptyList()
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(
+                    onClick = { saveError = saveScreenshotToDisk(flattenAnnotations(capturedImage, actions, texts)) },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(FeatherIcons.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Save…")
+                }
+                saveError?.let { Text(it, color = BossThemeColors.ErrorColor, style = MaterialTheme.typography.caption) }
+
+                OutlinedButton(
+                    onClick = { copyError = copyScreenshotToClipboard(flattenAnnotations(capturedImage, actions, texts)) },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(FeatherIcons.Copy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Copy")
+                }
+                copyError?.let { Text(it, color = BossThemeColors.ErrorColor, style = MaterialTheme.typography.caption) }
+            }
 
             Spacer(Modifier.weight(1f))
-            OutlinedButton(
-                onClick = { if (actions.isNotEmpty()) actions = actions.dropLast(1) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Undo") }
-            OutlinedButton(
-                onClick = { actions = emptyList(); texts = emptyList() },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Clear") }
 
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-            Button(onClick = { showSendDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("Send…") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Icon(FeatherIcons.X, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Cancel")
+                }
+                Button(
+                    onClick = { showSendDialog = true },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(FeatherIcons.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Send")
+                }
+            }
         }
 
+        Box(Modifier.fillMaxHeight().width(1.dp).background(BossThemeColors.BorderColor))
+
         Box(
-            Modifier.weight(1f).fillMaxHeight().background(Color(0xFF1C1C1E))
+            Modifier.weight(1f).fillMaxHeight().background(BossThemeColors.BackgroundColor)
                 .verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center,
         ) {
@@ -219,19 +302,21 @@ private fun AnnotationEditor(
 
                 pendingTextAt?.let { at ->
                     Popup(offset = IntOffset(at.x.toInt(), at.y.toInt())) {
-                        Surface(elevation = 4.dp) {
+                        Surface(shape = RoundedCornerShape(8.dp), elevation = 4.dp) {
                             TextField(
                                 value = pendingTextValue,
                                 onValueChange = { pendingTextValue = it },
                                 singleLine = true,
                                 modifier = Modifier.width(180.dp),
                                 trailingIcon = {
-                                    TextButton(onClick = {
+                                    IconButton(onClick = {
                                         if (pendingTextValue.isNotBlank()) {
                                             texts = texts + TextAnnotation(texts.size.toLong(), at.x, at.y, pendingTextValue, color)
                                         }
                                         pendingTextAt = null
-                                    }) { Text("Add") }
+                                    }) {
+                                        Icon(FeatherIcons.Check, contentDescription = "Add text")
+                                    }
                                 },
                             )
                         }
@@ -274,19 +359,105 @@ private fun AnnotationEditor(
     }
 }
 
-@Composable
-private fun ToolRow(tool: DrawTool, selected: Boolean, onClick: () -> Unit) {
-    val label = when (tool) {
-        DrawTool.PEN -> "Pen"
-        DrawTool.RECTANGLE -> "Rectangle"
-        DrawTool.ARROW -> "Arrow"
-        DrawTool.TEXT -> "Text"
+/**
+ * Shows a native save-file dialog and writes [image] to the chosen path as PNG.
+ * Returns an error message on failure, or `null` on success or user cancellation.
+ */
+private fun saveScreenshotToDisk(image: BufferedImage): String? {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Screenshot"
+        fileFilter = FileNameExtensionFilter("PNG Image", "png")
+        selectedFile = File("screenshot.png")
     }
-    Surface(
-        color = if (selected) MaterialTheme.colors.primary.copy(alpha = 0.25f) else Color.Transparent,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-    ) {
-        Text(label, modifier = Modifier.padding(8.dp), color = BossThemeColors.TextPrimary)
+    if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+    val chosen = chooser.selectedFile
+    val file = if (chosen.name.endsWith(".png", ignoreCase = true)) chosen else File(chosen.parentFile, "${chosen.name}.png")
+    return try {
+        ImageIO.write(image, "png", file)
+        null
+    } catch (e: IOException) {
+        e.message ?: "Failed to save screenshot"
+    }
+}
+
+/** Copies [image] to the system clipboard. Returns an error message on failure, or `null`. */
+private fun copyScreenshotToClipboard(image: BufferedImage): String? = try {
+    Toolkit.getDefaultToolkit().systemClipboard.setContents(ImageTransferable(image), null)
+    null
+} catch (e: HeadlessException) {
+    e.message ?: "Failed to copy screenshot"
+} catch (e: IllegalStateException) {
+    e.message ?: "Failed to copy screenshot"
+}
+
+private class ImageTransferable(private val image: BufferedImage) : Transferable {
+    override fun getTransferDataFlavors() = arrayOf(DataFlavor.imageFlavor)
+
+    override fun isDataFlavorSupported(flavor: DataFlavor) = flavor == DataFlavor.imageFlavor
+
+    override fun getTransferData(flavor: DataFlavor): Any {
+        if (flavor != DataFlavor.imageFlavor) throw UnsupportedFlavorException(flavor)
+        return image
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.overline, color = BossThemeColors.TextMuted)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    TooltipArea(tooltip = { Tooltip(label) }) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = if (selected) BossThemeColors.AccentColor else Color.Transparent,
+            modifier = Modifier.size(40.dp).clickable(onClick = onClick),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = if (selected) BossThemeColors.BackgroundColor else BossThemeColors.TextSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ActionIconButton(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    TooltipArea(tooltip = { Tooltip(label) }) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, BossThemeColors.BorderColor),
+            modifier = Modifier.size(36.dp).clickable(enabled = enabled, onClick = onClick),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = if (enabled) BossThemeColors.TextSecondary else BossThemeColors.TextMuted,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Tooltip(text: String) {
+    Surface(shape = RoundedCornerShape(6.dp), color = BossThemeColors.SurfaceColor, elevation = 4.dp) {
+        Text(
+            text,
+            style = MaterialTheme.typography.caption,
+            color = BossThemeColors.TextPrimary,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 
@@ -294,9 +465,10 @@ private fun ToolRow(tool: DrawTool, selected: Boolean, onClick: () -> Unit) {
 private fun ColorSwatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(24.dp)
+            .size(26.dp)
             .background(color, shape = CircleShape)
-            .then(if (selected) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
+            .border(1.dp, BossThemeColors.BorderColor, CircleShape)
+            .then(if (selected) Modifier.border(2.dp, BossThemeColors.AccentColor, CircleShape) else Modifier)
             .clickable(onClick = onClick),
     )
 }
@@ -322,47 +494,59 @@ private fun SendDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        Surface(elevation = 8.dp) {
-            Column(Modifier.padding(16.dp).width(360.dp)) {
+        Surface(shape = RoundedCornerShape(12.dp), elevation = 8.dp) {
+            Column(Modifier.padding(20.dp).width(360.dp)) {
                 Text("Send screenshot", style = MaterialTheme.typography.h6)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 when {
                     loading -> CircularProgressIndicator()
-                    loadError != null -> Text(loadError ?: "", color = Color.Red)
+                    loadError != null -> Text(loadError ?: "", color = BossThemeColors.ErrorColor)
                     recipients.isEmpty() -> Text("No teammates found in your organisations yet.")
                     else ->
                         LazyColumn(Modifier.heightIn(max = 240.dp)) {
                             items(recipients, key = { it.userId + it.orgId }) { r ->
-                                Row(
-                                    Modifier.fillMaxWidth().clickable { selected = r }.padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (selected == r) BossThemeColors.AccentColor.copy(alpha = 0.12f) else Color.Transparent,
+                                    modifier = Modifier.fillMaxWidth().clickable { selected = r },
                                 ) {
-                                    RadioButton(selected = selected == r, onClick = { selected = r })
-                                    Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text(r.email)
-                                        Text(r.orgName, style = MaterialTheme.typography.caption)
+                                    Row(
+                                        Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(selected = selected == r, onClick = { selected = r })
+                                        Spacer(Modifier.width(8.dp))
+                                        Column {
+                                            Text(r.email)
+                                            Text(r.orgName, style = MaterialTheme.typography.caption, color = BossThemeColors.TextSecondary)
+                                        }
                                     }
                                 }
                             }
                         }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
                     label = { Text("Note (optional)") },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                error?.let { Text(it, color = Color.Red, modifier = Modifier.padding(top = 8.dp)) }
-                Spacer(Modifier.height(12.dp))
+                error?.let { Text(it, color = BossThemeColors.ErrorColor, modifier = Modifier.padding(top = 8.dp)) }
+                Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(enabled = selected != null && !sending, onClick = { selected?.let { onSend(it, note) } }) {
+                    Button(
+                        enabled = selected != null && !sending,
+                        shape = RoundedCornerShape(8.dp),
+                        onClick = { selected?.let { onSend(it, note) } },
+                    ) {
                         if (sending) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
+                            Icon(FeatherIcons.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
                             Text("Send")
                         }
                     }

@@ -62,5 +62,5 @@ rm -rf ~/.boss_debug/plugin-cache/ai.rever.boss.plugin.dynamic.screenshotshare
 - The Supabase migration hasn't been applied to any environment.
 - No CI workflow (`.github/workflows/build.yml`) — copy the one from `docs/plugin-template` once
   this has its own repo.
-- v1 has no "reply" / "forward" / save-to-disk from the viewer window, and text annotations are
-  fixed-size (no font-size control).
+- v1 has no "reply" / "forward" / save-to-disk from the *viewer* window (the editor popup does
+  have a Save… button now), and text annotations are fixed-size (no font-size control).
