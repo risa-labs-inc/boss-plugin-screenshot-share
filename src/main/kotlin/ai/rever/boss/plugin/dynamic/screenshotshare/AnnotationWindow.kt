@@ -1,7 +1,14 @@
 package ai.rever.boss.plugin.dynamic.screenshotshare
 
+import ai.rever.boss.plugin.ui.BossCard
+import ai.rever.boss.plugin.ui.BossDialog
+import ai.rever.boss.plugin.ui.BossEmptyState
+import ai.rever.boss.plugin.ui.BossPrimaryButton
+import ai.rever.boss.plugin.ui.BossSearchBar
+import ai.rever.boss.plugin.ui.BossSecondaryButton
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -26,21 +33,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Button
 import androidx.compose.material.Checkbox
+import androidx.compose.material.CheckboxDefaults
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Slider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
-import androidx.compose.material.TextButton
 import androidx.compose.material.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,20 +56,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
@@ -72,12 +83,14 @@ import compose.icons.feathericons.CornerUpRight
 import compose.icons.feathericons.Edit3
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import compose.icons.feathericons.Lock
 import compose.icons.feathericons.RotateCcw
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Send
 import compose.icons.feathericons.Square
 import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Type
+import compose.icons.feathericons.Users
 import compose.icons.feathericons.X
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -560,6 +573,9 @@ private fun RainbowSwatch(selected: Boolean, onClick: () -> Unit) {
     )
 }
 
+/** Beyond this many recipients the list needs a filter to be usable. */
+private const val RECIPIENT_SEARCH_THRESHOLD = 8
+
 @Composable
 private fun SendDialog(
     api: ScreenshotShareApi,
@@ -574,9 +590,11 @@ private fun SendDialog(
     // returns one row per user, but org_id rides along on it, so identity
     // comparison would let the same person be picked twice.
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
-    var note by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var secure by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     var loadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
@@ -585,86 +603,456 @@ private fun SendDialog(
             .onFailure { loadError = it.message; loading = false }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), elevation = 8.dp) {
-            Column(Modifier.padding(20.dp).width(360.dp)) {
-                Text("Send screenshot", style = MaterialTheme.typography.h6)
-                Spacer(Modifier.height(16.dp))
+    // Filtered client-side: the server already caps this list at p_limit (50), so
+    // there is nothing to gain from a debounced RPC per keystroke. Past that cap
+    // the server-side p_query would be needed -- it exists and now matches
+    // display names as well as emails, but wiring it means per-keystroke calls.
+    val visible = remember(recipients, query) {
+        if (query.isBlank()) {
+            recipients
+        } else {
+            recipients.filter {
+                it.displayName.contains(query, ignoreCase = true) ||
+                    it.email.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    // Ticking Secure and leaving the field empty would otherwise send an
+    // unprotected screenshot to someone the sender believes has to unlock it.
+    val passwordMissing = secure && password.isBlank()
+
+    BossDialog(onDismissRequest = onDismiss) {
+        // Width on a wrapper: BossCard applies fillMaxWidth() after the modifier
+        // it is handed, so sizing it directly would be overridden.
+        Box(Modifier.width(420.dp)) {
+            BossCard {
+                SendDialogHeader(selectedCount = selectedIds.size, onClose = onDismiss)
+
+                Spacer(Modifier.height(14.dp))
+                Divider(color = BossThemeColors.BorderColor.copy(alpha = 0.6f))
+                Spacer(Modifier.height(14.dp))
+
+                SectionLabel("RECIPIENTS") {
+                    if (selectedIds.isNotEmpty()) {
+                        Text(
+                            "Clear",
+                            color = BossThemeColors.TextSecondary,
+                            fontSize = 11.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { selectedIds = emptySet() }
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+
+                if (recipients.size > RECIPIENT_SEARCH_THRESHOLD) {
+                    BossSearchBar(
+                        query = query,
+                        onQueryChange = { query = it },
+                        placeholder = "Search people...",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 when {
-                    loading -> CircularProgressIndicator()
-                    loadError != null -> Text(loadError ?: "", color = BossThemeColors.ErrorColor)
-                    recipients.isEmpty() -> Text("No teammates found in your organisations yet.")
+                    loading ->
+                        Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        }
+                    loadError != null ->
+                        Text(loadError ?: "", color = BossThemeColors.ErrorColor, fontSize = 12.sp)
+                    recipients.isEmpty() ->
+                        BossEmptyState(
+                            icon = FeatherIcons.Users,
+                            message = "No teammates yet",
+                            description = "You can only send to people who share an organisation with you.",
+                        )
+                    visible.isEmpty() ->
+                        Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.Center) {
+                            Text("No one matches \"$query\"", color = BossThemeColors.TextMuted, fontSize = 12.sp)
+                        }
                     else ->
-                        LazyColumn(Modifier.heightIn(max = 240.dp)) {
-                            items(recipients, key = { it.userId }) { r ->
-                                val checked = r.userId in selectedIds
-                                fun toggle() {
-                                    selectedIds = if (checked) selectedIds - r.userId else selectedIds + r.userId
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (checked) BossThemeColors.AccentColor.copy(alpha = 0.12f) else Color.Transparent,
-                                    modifier = Modifier.fillMaxWidth().clickable { toggle() },
-                                ) {
-                                    Row(
-                                        Modifier.padding(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Checkbox(checked = checked, onCheckedChange = { toggle() })
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(r.displayName)
-                                    }
-                                }
+                        LazyColumn(Modifier.heightIn(max = 208.dp)) {
+                            items(visible, key = { it.userId }) { r ->
+                                RecipientRow(
+                                    recipient = r,
+                                    checked = r.userId in selectedIds,
+                                    onToggle = {
+                                        selectedIds = if (r.userId in selectedIds) {
+                                            selectedIds - r.userId
+                                        } else {
+                                            selectedIds + r.userId
+                                        }
+                                    },
+                                )
                             }
                         }
                 }
+
                 Spacer(Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = note,
+
+                SectionLabel("MESSAGE") {
+                    Text(
+                        "${message.length}/$MAX_NOTE_LENGTH",
+                        color = BossThemeColors.TextMuted,
+                        fontSize = 10.sp,
+                    )
+                }
+                FlatField(
+                    value = message,
                     // 500 is the screenshot_shares_note_length CHECK -- enforced here so a
-                    // long note is a disabled keystroke, not a failed send.
-                    onValueChange = { if (it.length <= MAX_NOTE_LENGTH) note = it },
-                    label = { Text("Note (optional)") },
+                    // long message is a dropped keystroke, not a failed send.
+                    onValueChange = { if (it.length <= MAX_NOTE_LENGTH) message = it },
+                    placeholder = "Write a message...",
+                    singleLine = false,
+                    minLines = 3,
+                    maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { if (it.length <= MAX_PASSWORD_LENGTH) password = it },
-                    label = { Text("Password (optional)") },
-                    singleLine = true,
-                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
-                            Icon(if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye, contentDescription = "Toggle password visibility")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
+
+                Spacer(Modifier.height(14.dp))
+
+                SecureSection(
+                    secure = secure,
+                    onSecureChange = { secure = it },
+                    password = password,
+                    onPasswordChange = { if (it.length <= MAX_PASSWORD_LENGTH) password = it },
+                    showPassword = showPassword,
+                    onToggleShowPassword = { showPassword = !showPassword },
                 )
-                error?.let { Text(it, color = BossThemeColors.ErrorColor, modifier = Modifier.padding(top = 8.dp)) }
+
+                error?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text(it, color = BossThemeColors.ErrorColor, fontSize = 12.sp)
+                }
+
                 Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                Divider(color = BossThemeColors.BorderColor.copy(alpha = 0.6f))
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (passwordMissing) {
+                        Text(
+                            "Enter a password to continue",
+                            color = BossThemeColors.TextMuted,
+                            fontSize = 11.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    BossSecondaryButton(text = "Cancel", onClick = onDismiss)
                     Spacer(Modifier.width(8.dp))
-                    Button(
-                        enabled = selectedIds.isNotEmpty() && !sending,
-                        shape = RoundedCornerShape(8.dp),
-                        onClick = {
-                            // Filtered from `recipients` rather than collected as the
-                            // user clicks, so the send order matches the list order.
-                            onSend(recipients.filter { it.userId in selectedIds }, note, password.ifBlank { null })
-                        },
-                    ) {
-                        if (sending) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(FeatherIcons.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (selectedIds.size > 1) "Send (${selectedIds.size})" else "Send")
+                    if (sending) {
+                        Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                         }
+                    } else {
+                        BossPrimaryButton(
+                            text = if (selectedIds.size > 1) "Send (${selectedIds.size})" else "Send",
+                            enabled = selectedIds.isNotEmpty() && !passwordMissing,
+                            icon = FeatherIcons.Send,
+                            onClick = {
+                                onSend(
+                                    // Filtered from `recipients`, not `visible`: a search
+                                    // term left in the box must not silently drop someone
+                                    // already ticked.
+                                    recipients.filter { it.userId in selectedIds },
+                                    message,
+                                    // Gated on `secure`, so unticking genuinely removes
+                                    // protection even though the typed text is kept.
+                                    if (secure) password.ifBlank { null } else null,
+                                )
+                            },
+                        )
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SendDialogHeader(selectedCount: Int, onClose: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // AccentColor is a fill, never a glyph colour -- it fails 4.5:1 as text.
+        // A wash plus a TextPrimary icon is the house way to emphasise.
+        Box(
+            Modifier
+                .size(34.dp)
+                .background(BossThemeColors.AccentColor.copy(alpha = 0.16f), RoundedCornerShape(9.dp))
+                .border(1.dp, BossThemeColors.AccentColor.copy(alpha = 0.45f), RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(FeatherIcons.Send, null, Modifier.size(15.dp), tint = BossThemeColors.TextPrimary)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Send screenshot",
+                color = BossThemeColors.TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (selectedCount == 0) "Select who to send to" else "$selectedCount selected",
+                color = BossThemeColors.TextMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(26.dp)) {
+            Icon(FeatherIcons.X, "Close", Modifier.size(15.dp), tint = BossThemeColors.TextMuted)
+        }
+    }
+}
+
+/** Small caps-ish group label, with an optional trailing action or counter. */
+@Composable
+private fun SectionLabel(text: String, trailing: (@Composable () -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            color = BossThemeColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.8.sp,
+            modifier = Modifier.weight(1f),
+        )
+        trailing?.invoke()
+    }
+}
+
+@Composable
+private fun RecipientRow(recipient: Recipient, checked: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            // 0.16f is the house selection wash (plugin-manager's OrgFilterRow).
+            .background(if (checked) BossThemeColors.AccentColor.copy(alpha = 0.16f) else Color.Transparent)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Monogram(recipient.displayName)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            recipient.displayName,
+            color = if (checked) BossThemeColors.TextPrimary else BossThemeColors.TextSecondary,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+        )
+        Checkbox(
+            checked = checked,
+            onCheckedChange = { onToggle() },
+            colors = CheckboxDefaults.colors(
+                checkedColor = BossThemeColors.AccentColor,
+                uncheckedColor = BossThemeColors.TextSecondary,
+            ),
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/**
+ * Initials tile for a recipient, giving the rows a rail to scan down.
+ *
+ * Deliberately not colour-coded per person, mirroring the organisation plugin's
+ * Monogram: there is one accent token, so a per-user colour would have to be
+ * invented outside the palette.
+ */
+@Composable
+private fun Monogram(displayName: String) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .background(BossThemeColors.BackgroundColor, CircleShape)
+            .border(1.dp, BossThemeColors.BorderColor, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            initialsOf(displayName),
+            color = BossThemeColors.TextSecondary,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * The (up to) two characters to show for a display name: one per word for
+ * "Ada Lovelace", the first two for a mononym. Internal so the character
+ * choice -- the part with rules -- is testable without a composition.
+ */
+internal fun initialsOf(displayName: String): String {
+    val parts = displayName.trim().split(' ', '\t').filter { it.isNotBlank() }
+    return when {
+        parts.isEmpty() -> "??"
+        parts.size >= 2 -> "${parts[0].first()}${parts[1].first()}".uppercase()
+        parts[0].length >= 2 -> parts[0].take(2).uppercase()
+        else -> "${parts[0].first().uppercaseChar()}."
+    }
+}
+
+/**
+ * The opt-in password gate: a checkbox row that reveals the field only once
+ * ticked, so an ordinary send is not shaped like it wants a password.
+ *
+ * Unticking keeps whatever was typed -- the value is gated on [secure] at the
+ * send call site, not cleared here, so an accidental toggle costs nothing.
+ */
+@Composable
+private fun SecureSection(
+    secure: Boolean,
+    onSecureChange: (Boolean) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    showPassword: Boolean,
+    onToggleShowPassword: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(BossThemeColors.SurfaceColor)
+            .border(
+                1.dp,
+                if (secure) BossThemeColors.AccentColor.copy(alpha = 0.45f) else BossThemeColors.BorderColor,
+                RoundedCornerShape(6.dp),
+            ),
+    ) {
+        // Layout mirrors BossToggle so this reads as the same family, but with a
+        // Checkbox rather than its Switch -- it sits directly under the recipient
+        // checkboxes and should match them.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { onSecureChange(!secure) }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                FeatherIcons.Lock,
+                null,
+                Modifier.size(14.dp),
+                tint = if (secure) BossThemeColors.TextPrimary else BossThemeColors.TextMuted,
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Secure with password", color = BossThemeColors.TextPrimary, fontSize = 13.sp)
+                Text(
+                    "Recipients enter it to open the screenshot",
+                    color = BossThemeColors.TextMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Checkbox(
+                checked = secure,
+                onCheckedChange = onSecureChange,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = BossThemeColors.AccentColor,
+                    uncheckedColor = BossThemeColors.TextSecondary,
+                ),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+
+        AnimatedVisibility(visible = secure) {
+            Column {
+                Divider(color = BossThemeColors.BorderColor.copy(alpha = 0.6f))
+                FlatField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    placeholder = "Password",
+                    visualTransformation =
+                        if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailing = {
+                        Icon(
+                            if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                            contentDescription = "Toggle password visibility",
+                            modifier = Modifier
+                                .size(15.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .clickable(onClick = onToggleShowPassword),
+                            tint = BossThemeColors.TextMuted,
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Flat text field matching BossTextArea's box treatment (SurfaceColor fill, 6.dp
+ * radius, BorderColor border, 13.sp text, accent cursor, muted placeholder).
+ *
+ * Hand-rolled rather than reusing BossTextField/BossTextArea because this dialog
+ * needs the label and a character counter on one row -- those components always
+ * draw their own label, which would leave a gap -- and the password variant
+ * needs a visual transformation plus a trailing icon, which neither exposes.
+ */
+@Composable
+private fun FlatField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = Int.MAX_VALUE,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    // Same height arithmetic BossTextArea uses, so a 3-line field here and one
+    // there are the same size.
+    val minHeight = (minLines * 20 + 16).dp
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = singleLine,
+        maxLines = maxLines,
+        visualTransformation = visualTransformation,
+        textStyle = TextStyle(color = BossThemeColors.TextPrimary, fontSize = 13.sp),
+        cursorBrush = SolidColor(BossThemeColors.AccentColor),
+        decorationBox = { inner ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = minHeight)
+                    .background(BossThemeColors.SurfaceColor, RoundedCornerShape(6.dp))
+                    .border(1.dp, BossThemeColors.BorderColor, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
+            ) {
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) {
+                        Text(
+                            placeholder,
+                            color = BossThemeColors.TextMuted.copy(alpha = 0.6f),
+                            fontSize = 13.sp,
+                        )
+                    }
+                    inner()
+                }
+                trailing?.let {
+                    Spacer(Modifier.width(8.dp))
+                    it()
+                }
+            }
+        },
+        modifier = modifier,
+    )
 }

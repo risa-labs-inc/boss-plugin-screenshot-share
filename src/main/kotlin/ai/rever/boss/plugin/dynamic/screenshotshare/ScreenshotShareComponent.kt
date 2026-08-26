@@ -2,11 +2,16 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.api.PanelComponentWithUI
 import ai.rever.boss.plugin.api.PanelInfo
+import ai.rever.boss.plugin.ui.BossCard
+import ai.rever.boss.plugin.ui.BossDialog
+import ai.rever.boss.plugin.ui.BossPrimaryButton
+import ai.rever.boss.plugin.ui.BossSecondaryButton
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,11 +34,9 @@ import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
-import androidx.compose.material.Surface
 import androidx.compose.material.Tab
 import androidx.compose.material.TabRow
 import androidx.compose.material.Text
-import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,11 +46,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.essenty.lifecycle.doOnDestroy
 import compose.icons.FeatherIcons
@@ -57,6 +61,7 @@ import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Trash2
+import compose.icons.feathericons.Unlock
 
 // Mirrors the default bindings registered in ScreenshotShareDynamicPlugin.shortcuts() -- shown
 // as a hint only, so it doesn't track a user's rebind/unbind of those shortcuts in Settings.
@@ -173,30 +178,75 @@ private fun PasswordPromptDialog(error: String?, onDismiss: () -> Unit, onSubmit
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(12.dp), elevation = 8.dp) {
-            Column(Modifier.padding(20.dp).width(320.dp)) {
-                Text("Password required", style = MaterialTheme.typography.h6)
-                Spacer(Modifier.height(16.dp))
+    // BossDialog, not a raw Dialog: it is the variant that layers above the
+    // GPU-composited browser surface. Same fix as the send dialog.
+    BossDialog(onDismissRequest = onDismiss) {
+        Box(Modifier.width(320.dp)) {
+            BossCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // AccentColor is a fill, never a glyph colour -- a wash behind a
+                    // TextPrimary icon is the house way to emphasise.
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .background(BossThemeColors.AccentColor.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
+                            .border(1.dp, BossThemeColors.AccentColor.copy(alpha = 0.45f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(FeatherIcons.Lock, null, Modifier.size(14.dp), tint = BossThemeColors.TextPrimary)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            "Password required",
+                            color = BossThemeColors.TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "The sender protected this screenshot",
+                            color = BossThemeColors.TextMuted,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = password,
                     onValueChange = { if (it.length <= MAX_PASSWORD_LENGTH) password = it },
-                    label = { Text("Password") },
+                    placeholder = { Text("Password", fontSize = 13.sp) },
                     singleLine = true,
                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { showPassword = !showPassword }) {
-                            Icon(if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye, contentDescription = "Toggle password visibility")
+                            Icon(
+                                if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                                contentDescription = "Toggle password visibility",
+                                modifier = Modifier.size(15.dp),
+                            )
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                error?.let { Text(it, color = BossThemeColors.ErrorColor, modifier = Modifier.padding(top = 8.dp)) }
-                Spacer(Modifier.height(16.dp))
+                error?.let {
+                    Text(
+                        it,
+                        color = BossThemeColors.ErrorColor,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    BossSecondaryButton(text = "Cancel", onClick = onDismiss)
                     Spacer(Modifier.width(8.dp))
-                    Button(enabled = password.isNotEmpty(), onClick = { onSubmit(password) }) { Text("Unlock") }
+                    BossPrimaryButton(
+                        text = "Unlock",
+                        enabled = password.isNotEmpty(),
+                        icon = FeatherIcons.Unlock,
+                        onClick = { onSubmit(password) },
+                    )
                 }
             }
         }
