@@ -42,6 +42,7 @@ data class ReceivedScreenshot(
     val height: Int?,
     val createdAt: String,
     val readAt: String?,
+    val hasPassword: Boolean,
 ) {
     val isUnread: Boolean get() = readAt == null
 }
@@ -55,4 +56,15 @@ data class SentScreenshot(
     val height: Int?,
     val createdAt: String,
     val readAt: String?,
+    val hasPassword: Boolean,
 )
+
+/** Outcome of [ScreenshotShareApi.getImage] -- the password states are legitimate
+ * outcomes of a successful RPC call, not failures, so they're modeled here rather
+ * than as exceptions through [Result.failure]. */
+sealed class ImageFetchResult {
+    data class Success(val imageBase64: String, val mimeType: String) : ImageFetchResult()
+    object PasswordRequired : ImageFetchResult()
+    data class InvalidPassword(val attemptsRemaining: Int) : ImageFetchResult()
+    object Locked : ImageFetchResult()
+}

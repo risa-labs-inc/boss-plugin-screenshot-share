@@ -14,6 +14,10 @@ import javax.imageio.ImageIO
 
 private const val POLL_INTERVAL_MS = 25_000L
 
+/** State for the password-entry dialog shown when opening a protected [ReceivedScreenshot].
+ * [errorMessage] is null on first prompt and set after a wrong-password retry. */
+data class PasswordPrompt(val shareId: String, val errorMessage: String? = null)
+
 /** Holds inbox/sent state and polls for new shares -- plugins get no realtime
  * channel, so polling on [PluginContext.pluginScope] (lifecycle-tied, outlives
  * any single panel composition) is the only delivery signal available. */
@@ -36,6 +40,9 @@ class ScreenshotShareViewModel(
 
     private val _capturing = MutableStateFlow(false)
     val capturing: StateFlow<Boolean> = _capturing.asStateFlow()
+
+    private val _passwordPrompt = MutableStateFlow<PasswordPrompt?>(null)
+    val passwordPrompt: StateFlow<PasswordPrompt?> = _passwordPrompt.asStateFlow()
 
     private var started = false
 
@@ -122,18 +129,45 @@ class ScreenshotShareViewModel(
         }
     }
 
-    fun openReceived(shareId: String) {
+    fun openReceived(shareId: String, password: String? = null) {
         scope.launch {
-            api.getImage(shareId)
-                .onSuccess { (base64, _) ->
-                    val bytes = Base64.getDecoder().decode(base64)
-                    val image = runCatching { ImageIO.read(ByteArrayInputStream(bytes)) }.getOrNull()
-                    if (image != null) openViewerWindow(image)
-                    refresh()
+            api.getImage(shareId, password)
+                .onSuccess { result ->
+                    when (result) {
+                        is ImageFetchResult.Success -> {
+                            val bytes = Base64.getDecoder().decode(result.imageBase64)
+                            val image = runCatching { ImageIO.read(ByteArrayInputStream(bytes)) }.getOrNull()
+                            if (image != null) openViewerWindow(image)
+                            _passwordPrompt.value = null
+                            refresh()
+                        }
+                        ImageFetchResult.PasswordRequired ->
+                            _passwordPrompt.value = PasswordPrompt(shareId)
+                        is ImageFetchResult.InvalidPassword -> {
+                            val attempts = result.attemptsRemaining
+                            _passwordPrompt.value = PasswordPrompt(
+                                shareId,
+                                errorMessage = "Incorrect password ($attempts attempt${if (attempts == 1) "" else "s"} left)",
+                            )
+                        }
+                        ImageFetchResult.Locked -> {
+                            _passwordPrompt.value = null
+                            context.notificationProvider?.showError(
+                                "Screenshot locked",
+                                "Too many incorrect password attempts",
+                            )
+                        }
+                    }
                 }
                 .onFailure {
                     context.notificationProvider?.showError("Couldn't open screenshot", it.message ?: "Unknown error")
                 }
         }
+    }
+
+    fun submitPassword(shareId: String, password: String) = openReceived(shareId, password)
+
+    fun dismissPasswordPrompt() {
+        _passwordPrompt.value = null
     }
 }

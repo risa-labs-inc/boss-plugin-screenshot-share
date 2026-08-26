@@ -58,6 +58,8 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -68,6 +70,8 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.CornerUpRight
 import compose.icons.feathericons.Edit3
+import compose.icons.feathericons.Eye
+import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.RotateCcw
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Send
@@ -348,7 +352,7 @@ private fun AnnotationEditor(
             sending = sending,
             error = errorText,
             onDismiss = { showSendDialog = false },
-            onSend = { recipient, note ->
+            onSend = { recipient, note, password ->
                 sending = true
                 errorText = null
                 scope.launch {
@@ -362,6 +366,7 @@ private fun AnnotationEditor(
                         width = flattenedImage.width,
                         height = flattenedImage.height,
                         note = note.ifBlank { null },
+                        password = password,
                     ).onSuccess {
                         sending = false
                         onSent()
@@ -538,12 +543,14 @@ private fun SendDialog(
     sending: Boolean,
     error: String?,
     onDismiss: () -> Unit,
-    onSend: (Recipient, String) -> Unit,
+    onSend: (Recipient, String, String?) -> Unit,
 ) {
     var recipients by remember { mutableStateOf(listOf<Recipient>()) }
     var loading by remember { mutableStateOf(true) }
     var selected by remember { mutableStateOf<Recipient?>(null) }
     var note by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
@@ -591,6 +598,20 @@ private fun SendDialog(
                     label = { Text("Note (optional)") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password (optional)") },
+                    singleLine = true,
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye, contentDescription = "Toggle password visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 error?.let { Text(it, color = BossThemeColors.ErrorColor, modifier = Modifier.padding(top = 8.dp)) }
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
@@ -599,7 +620,7 @@ private fun SendDialog(
                     Button(
                         enabled = selected != null && !sending,
                         shape = RoundedCornerShape(8.dp),
-                        onClick = { selected?.let { onSend(it, note) } },
+                        onClick = { selected?.let { onSend(it, note, password.ifBlank { null }) } },
                     ) {
                         if (sending) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)

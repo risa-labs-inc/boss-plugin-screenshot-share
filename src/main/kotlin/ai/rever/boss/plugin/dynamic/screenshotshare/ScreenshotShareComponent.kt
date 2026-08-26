@@ -22,13 +22,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
+import androidx.compose.material.OutlinedTextField
+import androidx.compose.material.Surface
 import androidx.compose.material.Tab
 import androidx.compose.material.TabRow
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,11 +43,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.arkivanov.decompose.ComponentContext
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Crop
+import compose.icons.feathericons.Eye
+import compose.icons.feathericons.EyeOff
+import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Monitor
 
 // Mirrors the default bindings registered in ScreenshotShareDynamicPlugin.shortcuts() -- shown
@@ -71,6 +82,7 @@ class ScreenshotShareComponent(
             val sent by viewModel.sent.collectAsState()
             val unread by viewModel.unreadCount.collectAsState()
             val error by viewModel.loadError.collectAsState()
+            val passwordPrompt by viewModel.passwordPrompt.collectAsState()
 
             Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -128,6 +140,49 @@ class ScreenshotShareComponent(
                             SentRow(item)
                         }
                     }
+                }
+            }
+
+            passwordPrompt?.let { prompt ->
+                PasswordPromptDialog(
+                    error = prompt.errorMessage,
+                    onDismiss = { viewModel.dismissPasswordPrompt() },
+                    onSubmit = { password -> viewModel.submitPassword(prompt.shareId, password) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PasswordPromptDialog(error: String?, onDismiss: () -> Unit, onSubmit: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(12.dp), elevation = 8.dp) {
+            Column(Modifier.padding(20.dp).width(320.dp)) {
+                Text("Password required", style = MaterialTheme.typography.h6)
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(if (showPassword) FeatherIcons.EyeOff else FeatherIcons.Eye, contentDescription = "Toggle password visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let { Text(it, color = BossThemeColors.ErrorColor, modifier = Modifier.padding(top = 8.dp)) }
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(enabled = password.isNotEmpty(), onClick = { onSubmit(password) }) { Text("Unlock") }
                 }
             }
         }
@@ -192,6 +247,10 @@ private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit) {
                 Spacer(Modifier.width(6.dp))
             }
             Text(item.senderEmail, style = MaterialTheme.typography.subtitle2, color = BossThemeColors.TextPrimary)
+            if (item.hasPassword) {
+                Spacer(Modifier.width(6.dp))
+                Icon(FeatherIcons.Lock, contentDescription = "Password protected", modifier = Modifier.size(12.dp), tint = BossThemeColors.TextMuted)
+            }
         }
     }
 }

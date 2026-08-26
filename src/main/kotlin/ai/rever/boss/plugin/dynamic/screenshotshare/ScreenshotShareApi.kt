@@ -45,6 +45,8 @@ class ScreenshotShareApi(private val context: PluginContext) {
 
     private fun JsonObject.intOrNull(key: String): Int? = this[key]?.jsonPrimitive?.intOrNull
 
+    private fun JsonObject.boolOrFalse(key: String): Boolean = this[key]?.jsonPrimitive?.booleanOrNull ?: false
+
     suspend fun listShareableRecipients(query: String? = null): Result<List<Recipient>> =
         rpc(
             "list_shareable_recipients",
@@ -72,6 +74,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
         width: Int,
         height: Int,
         note: String?,
+        password: String?,
     ): Result<String> =
         rpc(
             "share_screenshot",
@@ -82,6 +85,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
                 put("p_width", width)
                 put("p_height", height)
                 put("p_note", note)
+                put("p_password", password)
             },
         ).mapCatching { obj ->
             requireSuccess(obj).strOrNull("share_id") ?: error("Missing share_id in response")
@@ -106,6 +110,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
                     height = o.intOrNull("height"),
                     createdAt = o.str("created_at"),
                     readAt = o.strOrNull("read_at"),
+                    hasPassword = o.boolOrFalse("has_password"),
                 )
             }
         }
@@ -123,14 +128,32 @@ class ScreenshotShareApi(private val context: PluginContext) {
                     height = o.intOrNull("height"),
                     createdAt = o.str("created_at"),
                     readAt = o.strOrNull("read_at"),
+                    hasPassword = o.boolOrFalse("has_password"),
                 )
             }
         }
 
-    /** Returns (base64Image, mimeType). Marks the share read server-side as a side effect. */
-    suspend fun getImage(shareId: String): Result<Pair<String, String>> =
-        rpc("get_screenshot_image", buildJsonObject { put("p_share_id", shareId) }).mapCatching { obj ->
-            val o = requireSuccess(obj)
-            o.str("image_base64") to o.str("mime_type")
+    /** Marks the share read server-side as a side effect, once a [ImageFetchResult.Success] is
+     * returned. The password-prompt states are legitimate outcomes, not [Result.failure]s --
+     * only "password_required"/"invalid_password"/"locked" are intercepted here; any other
+     * server error (e.g. "Screenshot not found") still surfaces as a failed [Result]. */
+    suspend fun getImage(shareId: String, password: String? = null): Result<ImageFetchResult> =
+        rpc(
+            "get_screenshot_image",
+            buildJsonObject {
+                put("p_share_id", shareId)
+                put("p_password", password)
+            },
+        ).mapCatching { obj ->
+            if (obj.boolOrFalse("success")) {
+                ImageFetchResult.Success(obj.str("image_base64"), obj.str("mime_type"))
+            } else {
+                when (obj.strOrNull("error")) {
+                    "password_required" -> ImageFetchResult.PasswordRequired
+                    "invalid_password" -> ImageFetchResult.InvalidPassword(obj.intOrNull("attempts_remaining") ?: 0)
+                    "locked" -> ImageFetchResult.Locked
+                    else -> error(obj.strOrNull("error") ?: "Request failed")
+                }
+            }
         }
 }
