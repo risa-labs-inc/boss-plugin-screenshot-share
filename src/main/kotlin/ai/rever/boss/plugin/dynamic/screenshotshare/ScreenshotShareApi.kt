@@ -58,6 +58,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
                 Recipient(
                     userId = o.str("user_id"),
                     email = o.str("email"),
+                    displayName = o.str("display_name"),
                     orgId = o.str("org_id"),
                     orgName = o.str("org_name"),
                 )

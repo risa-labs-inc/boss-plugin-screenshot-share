@@ -28,6 +28,7 @@ data class TextAnnotation(
 data class Recipient(
     val userId: String,
     val email: String,
+    val displayName: String,
     val orgId: String,
     val orgName: String,
 )

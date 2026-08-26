@@ -9,7 +9,6 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.Toolkit
-import java.awt.Window
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -53,7 +52,7 @@ object ScreenshotCapture {
             val window = JWindow()
             window.bounds = virtualBounds
             window.isAlwaysOnTop = true
-            window.type = Window.Type.UTILITY
+            window.focusableWindowState = true
             window.cursor = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
             // Per-pixel translucency isn't guaranteed on every platform/GraphicsDevice;
             // where unsupported this just renders as an opaque dark overlay, which
@@ -137,6 +136,8 @@ object ScreenshotCapture {
 
             window.contentPane.add(overlayPanel)
             window.isVisible = true
+            window.toFront()
+            window.requestFocus()
             overlayPanel.requestFocusInWindow()
 
             cont.invokeOnCancellation { finish(null) }

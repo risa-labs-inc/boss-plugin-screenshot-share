@@ -2,7 +2,6 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeColors
-import ai.rever.boss.plugin.ui.BossThemeController
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -128,10 +127,11 @@ fun openAnnotationWindow(
         // i.e. after the peer already exists -- left the title bar stuck on macOS's default
         // light chrome regardless of app theme.
         if (System.getProperty("os.name").lowercase().contains("mac")) {
-            val isDark = !BossThemeController.current.isLight
+            // boss-plugin-api's BossTheme is dark-mode-only today - no light-mode API is
+            // exposed to plugins - so the title bar always matches the dark chrome below.
             frame.rootPane.putClientProperty(
                 "apple.awt.windowAppearance",
-                if (isDark) "NSAppearanceNameDarkAqua" else "NSAppearanceNameAqua",
+                "NSAppearanceNameDarkAqua",
             )
         }
 
@@ -576,7 +576,7 @@ private fun SendDialog(
                                         RadioButton(selected = selected == r, onClick = { selected = r })
                                         Spacer(Modifier.width(8.dp))
                                         Column {
-                                            Text(r.email)
+                                            Text(r.displayName)
                                             Text(r.orgName, style = MaterialTheme.typography.caption, color = BossThemeColors.TextSecondary)
                                         }
                                     }

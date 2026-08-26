@@ -11,6 +11,6 @@
   "requiredPermissions": [],
   "definedPermissions": [],
   "description": "Capture a screenshot, annotate it, and send it to a teammate in one of your organisations.",
-  "author": "Your Name",
+  "author": "Risa Labs",
   "url": "https://github.com/risa-labs-inc/boss-plugin-screenshot-share"
 }

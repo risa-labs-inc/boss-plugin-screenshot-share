@@ -39,6 +39,10 @@ class ScreenshotShareViewModel(
 
     private var started = false
 
+    // Null until the first successful poll, so opening the inbox never toasts
+    // for shares that were already sitting there before this session started.
+    private var knownReceivedIds: Set<String>? = null
+
     fun startPolling() {
         if (started) return
         started = true
@@ -56,14 +60,31 @@ class ScreenshotShareViewModel(
 
     suspend fun refresh() {
         api.listReceived()
-            .onSuccess {
-                _received.value = it
-                _unreadCount.value = it.count { s -> s.isUnread }
+            .onSuccess { list ->
+                notifyNewArrivals(list)
+                _received.value = list
+                _unreadCount.value = list.count { s -> s.isUnread }
                 _loadError.value = null
             }
             .onFailure { _loadError.value = it.message }
 
         api.listSent().onSuccess { _sent.value = it }
+    }
+
+    private fun notifyNewArrivals(list: List<ReceivedScreenshot>) {
+        val previouslyKnown = knownReceivedIds
+        knownReceivedIds = list.mapTo(mutableSetOf()) { it.id }
+        if (previouslyKnown == null) return
+
+        val arrived = list.filter { it.id !in previouslyKnown }
+        if (arrived.isEmpty()) return
+
+        val message = if (arrived.size == 1) {
+            "New screenshot from ${arrived.first().senderEmail}"
+        } else {
+            "${arrived.size} new screenshots received"
+        }
+        context.notificationProvider?.showInfo(message, title = "Secure Grab")
     }
 
     /** Selects a region of the screen, then opens it for annotation/send. */
@@ -92,7 +113,10 @@ class ScreenshotShareViewModel(
                     api = api,
                     scope = scope,
                     capturedImage = image,
-                    onSent = { refreshAsync() },
+                    onSent = {
+                        context.notificationProvider?.showSuccess("Screenshot sent", title = "Secure Grab")
+                        refreshAsync()
+                    },
                 )
             }
         }
