@@ -67,6 +67,7 @@ data class ReceivedScreenshot(
     val height: Int?,
     val createdAt: String,
     val readAt: String?,
+    val expiresAt: String?,
     val hasPassword: Boolean,
 ) {
     val isUnread: Boolean get() = readAt == null
@@ -81,6 +82,7 @@ data class SentScreenshot(
     val height: Int?,
     val createdAt: String,
     val readAt: String?,
+    val expiresAt: String?,
     val hasPassword: Boolean,
 )
 

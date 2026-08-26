@@ -230,6 +230,27 @@ class ScreenshotShareViewModel(
         }
     }
 
+    /**
+     * Deletes a share from either side -- a recall when the caller sent it, a
+     * dismissal when they received it. Refreshes both lists since the row is
+     * gone from whichever one showed it.
+     */
+    fun deleteShare(shareId: String) {
+        scope.launch {
+            api.deleteShare(shareId)
+                .onSuccess {
+                    _passwordPrompt.value = null
+                    refresh()
+                }
+                .onFailure {
+                    context.notificationProvider?.showError(
+                        "Couldn't delete screenshot",
+                        it.message ?: "Unknown error",
+                    )
+                }
+        }
+    }
+
     fun submitPassword(shareId: String, password: String) = openReceived(shareId, password)
 
     fun dismissPasswordPrompt() {

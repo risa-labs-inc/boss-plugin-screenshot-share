@@ -110,6 +110,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
                     height = o.intOrNull("height"),
                     createdAt = o.str("created_at"),
                     readAt = o.strOrNull("read_at"),
+                    expiresAt = o.strOrNull("expires_at"),
                     hasPassword = o.boolOrFalse("has_password"),
                 )
             }
@@ -128,10 +129,19 @@ class ScreenshotShareApi(private val context: PluginContext) {
                     height = o.intOrNull("height"),
                     createdAt = o.str("created_at"),
                     readAt = o.strOrNull("read_at"),
+                    expiresAt = o.strOrNull("expires_at"),
                     hasPassword = o.boolOrFalse("has_password"),
                 )
             }
         }
+
+    /**
+     * Deletes a share. For the sender this is a recall -- the recipient loses
+     * access immediately, read or not; for the recipient it's a dismissal.
+     */
+    suspend fun deleteShare(shareId: String): Result<Unit> =
+        rpc("delete_screenshot_share", buildJsonObject { put("p_share_id", shareId) })
+            .mapCatching { requireSuccess(it); Unit }
 
     /** Marks the share read server-side as a side effect, once a [ImageFetchResult.Success] is
      * returned. The password-prompt states are legitimate outcomes, not [Result.failure]s --

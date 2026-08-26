@@ -56,6 +56,7 @@ import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Monitor
+import compose.icons.feathericons.Trash2
 
 // Mirrors the default bindings registered in ScreenshotShareDynamicPlugin.shortcuts() -- shown
 // as a hint only, so it doesn't track a user's rebind/unbind of those shortcuts in Settings.
@@ -142,11 +143,15 @@ class ScreenshotShareComponent(
                             emptySubtext = "$CAPTURE_REGION_SHORTCUT to capture a region, $CAPTURE_FULL_SCREEN_SHORTCUT for the full screen",
                             key = { it.id },
                         ) { item ->
-                            ReceivedRow(item) { viewModel.openReceived(item.id) }
+                            ReceivedRow(
+                                item,
+                                onClick = { viewModel.openReceived(item.id) },
+                                onDelete = { viewModel.deleteShare(item.id) },
+                            )
                         }
                     } else {
                         ScreenshotList(sent, "You haven't sent anything yet", key = { it.id }) { item ->
-                            SentRow(item)
+                            SentRow(item, onDelete = { viewModel.deleteShare(item.id) })
                         }
                     }
                 }
@@ -233,23 +238,50 @@ private fun <T> ScreenshotList(
     }
 }
 
-/** Shared layout for an inbox/sent list entry: a headline, an optional note, the timestamp, then a divider. */
+/**
+ * Shared layout for an inbox/sent list entry: a headline, an optional note, the
+ * timestamp and a delete affordance, then a divider. [deleteLabel] differs by
+ * side -- the sender is recalling, the recipient is only clearing their own copy.
+ */
 @Composable
-private fun ScreenshotRow(note: String?, createdAt: String, onClick: (() -> Unit)? = null, headline: @Composable () -> Unit) {
+private fun ScreenshotRow(
+    note: String?,
+    createdAt: String,
+    deleteLabel: String,
+    onDelete: () -> Unit,
+    onClick: (() -> Unit)? = null,
+    headline: @Composable () -> Unit,
+) {
     val rowModifier = Modifier.fillMaxWidth()
         .let { if (onClick != null) it.clickable(onClick = onClick) else it }
         .padding(vertical = 8.dp)
-    Column(rowModifier) {
-        headline()
-        note?.let { Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary) }
-        Text(createdAt, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary)
+    Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            headline()
+            note?.let { Text(it, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary) }
+            Text(createdAt, style = MaterialTheme.typography.caption, color = BossThemeColors.TextPrimary)
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                FeatherIcons.Trash2,
+                contentDescription = deleteLabel,
+                modifier = Modifier.size(14.dp),
+                tint = BossThemeColors.TextMuted,
+            )
+        }
     }
     Divider()
 }
 
 @Composable
-private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit) {
-    ScreenshotRow(note = item.note, createdAt = item.createdAt, onClick = onClick) {
+private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit, onDelete: () -> Unit) {
+    ScreenshotRow(
+        note = item.note,
+        createdAt = item.createdAt,
+        deleteLabel = "Delete from inbox",
+        onDelete = onDelete,
+        onClick = onClick,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (item.isUnread) {
                 Box(Modifier.size(8.dp).background(Color(0xFF0A84FF), CircleShape))
@@ -265,8 +297,13 @@ private fun ReceivedRow(item: ReceivedScreenshot, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SentRow(item: SentScreenshot) {
-    ScreenshotRow(note = item.note, createdAt = item.createdAt) {
+private fun SentRow(item: SentScreenshot, onDelete: () -> Unit) {
+    ScreenshotRow(
+        note = item.note,
+        createdAt = item.createdAt,
+        deleteLabel = "Recall this screenshot",
+        onDelete = onDelete,
+    ) {
         Text(
             "To ${item.recipientEmail}" + if (item.readAt != null) " · read" else " · unread",
             style = MaterialTheme.typography.subtitle2,
