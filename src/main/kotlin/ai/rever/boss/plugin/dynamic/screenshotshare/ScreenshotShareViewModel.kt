@@ -184,8 +184,9 @@ class ScreenshotShareViewModel(
                     api = api,
                     scope = scope,
                     capturedImage = image,
-                    onSent = {
-                        context.notificationProvider?.showSuccess("Screenshot sent", title = "Secure Grab")
+                    onSent = { count ->
+                        val message = if (count == 1) "Screenshot sent" else "Screenshot sent to $count people"
+                        context.notificationProvider?.showSuccess(message, title = "Secure Grab")
                         refreshAsync()
                     },
                 )

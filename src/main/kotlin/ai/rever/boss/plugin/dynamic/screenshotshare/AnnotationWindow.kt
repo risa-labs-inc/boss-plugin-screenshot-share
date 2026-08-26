@@ -30,13 +30,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
+import androidx.compose.material.Checkbox
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
-import androidx.compose.material.RadioButton
 import androidx.compose.material.Slider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
@@ -112,7 +112,7 @@ fun openAnnotationWindow(
     api: ScreenshotShareApi,
     scope: CoroutineScope,
     capturedImage: BufferedImage,
-    onSent: () -> Unit,
+    onSent: (Int) -> Unit,
 ) {
     SwingUtilities.invokeLater {
         val frame = JFrame("Annotate Screenshot — Secure Grab")
@@ -146,9 +146,9 @@ fun openAnnotationWindow(
                     api = api,
                     scope = scope,
                     onCancel = { frame.dispose() },
-                    onSent = {
+                    onSent = { count ->
                         frame.dispose()
-                        onSent()
+                        onSent(count)
                     },
                 )
             }
@@ -188,7 +188,7 @@ private fun AnnotationEditor(
     api: ScreenshotShareApi,
     scope: CoroutineScope,
     onCancel: () -> Unit,
-    onSent: () -> Unit,
+    onSent: (Int) -> Unit,
 ) {
     var tool by remember { mutableStateOf(DrawTool.PEN) }
     var color by remember { mutableStateOf(PALETTE.first()) }
@@ -355,7 +355,7 @@ private fun AnnotationEditor(
             sending = sending,
             error = errorText,
             onDismiss = { showSendDialog = false },
-            onSend = { recipient, note, password ->
+            onSend = { recipients, note, password ->
                 sending = true
                 errorText = null
                 scope.launch {
@@ -371,21 +371,31 @@ private fun AnnotationEditor(
                             .format(mb, MAX_IMAGE_BYTES / (1024 * 1024))
                         return@launch
                     }
+                    // Encoded once and reused: share_screenshot takes a single
+                    // recipient, so a fan-out is N calls but must not be N encodes.
                     val base64 = Base64.getEncoder().encodeToString(bytes)
-                    api.shareScreenshot(
-                        recipientId = recipient.userId,
-                        imageBase64 = base64,
-                        mimeType = "image/png",
-                        width = flattenedImage.width,
-                        height = flattenedImage.height,
-                        note = note.ifBlank { null },
-                        password = password,
-                    ).onSuccess {
-                        sending = false
-                        onSent()
-                    }.onFailure {
-                        sending = false
-                        errorText = it.message ?: "Failed to send screenshot"
+                    val failed = mutableListOf<String>()
+                    for (recipient in recipients) {
+                        api.shareScreenshot(
+                            recipientId = recipient.userId,
+                            imageBase64 = base64,
+                            mimeType = "image/png",
+                            width = flattenedImage.width,
+                            height = flattenedImage.height,
+                            note = note.ifBlank { null },
+                            password = password,
+                        ).onFailure { failed += recipient.displayName }
+                    }
+                    sending = false
+                    when {
+                        // Partial success is reported rather than swallowed: the
+                        // recipients who did receive it keep their copy, so silently
+                        // succeeding would leave the sender unaware of the gap.
+                        failed.isEmpty() -> onSent(recipients.size)
+                        failed.size == recipients.size ->
+                            errorText = "Failed to send to ${failed.joinToString(", ")}"
+                        else ->
+                            errorText = "Sent to ${recipients.size - failed.size} of ${recipients.size} — failed for ${failed.joinToString(", ")}"
                     }
                 }
             },
@@ -556,11 +566,14 @@ private fun SendDialog(
     sending: Boolean,
     error: String?,
     onDismiss: () -> Unit,
-    onSend: (Recipient, String, String?) -> Unit,
+    onSend: (List<Recipient>, String, String?) -> Unit,
 ) {
     var recipients by remember { mutableStateOf(listOf<Recipient>()) }
     var loading by remember { mutableStateOf(true) }
-    var selected by remember { mutableStateOf<Recipient?>(null) }
+    // Keyed by userId, not the Recipient itself: list_shareable_recipients
+    // returns one row per user, but org_id rides along on it, so identity
+    // comparison would let the same person be picked twice.
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var note by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -583,22 +596,23 @@ private fun SendDialog(
                     recipients.isEmpty() -> Text("No teammates found in your organisations yet.")
                     else ->
                         LazyColumn(Modifier.heightIn(max = 240.dp)) {
-                            items(recipients, key = { it.userId + it.orgId }) { r ->
+                            items(recipients, key = { it.userId }) { r ->
+                                val checked = r.userId in selectedIds
+                                fun toggle() {
+                                    selectedIds = if (checked) selectedIds - r.userId else selectedIds + r.userId
+                                }
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (selected == r) BossThemeColors.AccentColor.copy(alpha = 0.12f) else Color.Transparent,
-                                    modifier = Modifier.fillMaxWidth().clickable { selected = r },
+                                    color = if (checked) BossThemeColors.AccentColor.copy(alpha = 0.12f) else Color.Transparent,
+                                    modifier = Modifier.fillMaxWidth().clickable { toggle() },
                                 ) {
                                     Row(
                                         Modifier.padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        RadioButton(selected = selected == r, onClick = { selected = r })
+                                        Checkbox(checked = checked, onCheckedChange = { toggle() })
                                         Spacer(Modifier.width(8.dp))
-                                        Column {
-                                            Text(r.displayName)
-                                            Text(r.orgName, style = MaterialTheme.typography.caption, color = BossThemeColors.TextSecondary)
-                                        }
+                                        Text(r.displayName)
                                     }
                                 }
                             }
@@ -633,16 +647,20 @@ private fun SendDialog(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        enabled = selected != null && !sending,
+                        enabled = selectedIds.isNotEmpty() && !sending,
                         shape = RoundedCornerShape(8.dp),
-                        onClick = { selected?.let { onSend(it, note, password.ifBlank { null }) } },
+                        onClick = {
+                            // Filtered from `recipients` rather than collected as the
+                            // user clicks, so the send order matches the list order.
+                            onSend(recipients.filter { it.userId in selectedIds }, note, password.ifBlank { null })
+                        },
                     ) {
                         if (sending) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
                             Icon(FeatherIcons.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Send")
+                            Text(if (selectedIds.size > 1) "Send (${selectedIds.size})" else "Send")
                         }
                     }
                 }
