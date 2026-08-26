@@ -9,7 +9,7 @@ plugins {
 
 group = "ai.rever.boss.plugin.dynamic"
 // The single source of truth; processResources syncs it into plugin.json.
-version = "0.1.3"
+version = "0.1.4"
 
 java {
     toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }
