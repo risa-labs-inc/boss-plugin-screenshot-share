@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.arkivanov.decompose.ComponentContext
+import com.arkivanov.essenty.lifecycle.doOnDestroy
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Crop
 import compose.icons.feathericons.Eye
@@ -67,6 +68,13 @@ class ScreenshotShareComponent(
     override val panelInfo: PanelInfo,
     private val viewModel: ScreenshotShareViewModel,
 ) : PanelComponentWithUI, ComponentContext by ctx {
+
+    // The ViewModel's poll loop runs on the *plugin* scope, so without this it
+    // would outlive the panel and keep issuing RPCs for the whole plugin
+    // lifetime -- panel closed, app idle, indefinitely.
+    init {
+        lifecycle.doOnDestroy { viewModel.dispose() }
+    }
 
     override fun onInitialized() {
         viewModel.startPolling()
@@ -118,7 +126,8 @@ class ScreenshotShareComponent(
                     Tab(selected = tab == 0, onClick = { tab = 0 }) {
                         Text("Inbox" + if (unread > 0) " ($unread)" else "", modifier = Modifier.padding(8.dp))
                     }
-                    Tab(selected = tab == 1, onClick = { tab = 1 }) {
+                    // Sent isn't polled -- fetched here, on the tab that shows it.
+                    Tab(selected = tab == 1, onClick = { tab = 1; viewModel.refreshSentAsync() }) {
                         Text("Sent", modifier = Modifier.padding(8.dp))
                     }
                 }
@@ -166,7 +175,7 @@ private fun PasswordPromptDialog(error: String?, onDismiss: () -> Unit, onSubmit
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it },
+                    onValueChange = { if (it.length <= MAX_PASSWORD_LENGTH) password = it },
                     label = { Text("Password") },
                     singleLine = true,
                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),

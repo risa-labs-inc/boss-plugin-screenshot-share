@@ -206,6 +206,9 @@ private fun AnnotationEditor(
 
     val bitmap = remember(capturedImage) { capturedImage.toComposeImageBitmap() }
     val density = LocalDensity.current
+    // Deliberately lazy, not a remember(actions, texts): each call allocates a
+    // full-size ARGB copy (~59MB for a 5K grab), so it runs on an explicit
+    // Save/Copy/Send click rather than after every stroke.
     fun flattened() = flattenAnnotations(capturedImage, actions, texts)
 
     Column(Modifier.fillMaxSize()) {
@@ -307,12 +310,12 @@ private fun AnnotationEditor(
                         Surface(shape = RoundedCornerShape(8.dp), elevation = 4.dp) {
                             TextField(
                                 value = pendingTextValue,
-                                onValueChange = { pendingTextValue = it },
+                                onValueChange = { if (it.length <= MAX_TEXT_LENGTH) pendingTextValue = it },
                                 singleLine = true,
                                 modifier = Modifier.width(180.dp),
                                 trailingIcon = {
                                     IconButton(onClick = {
-                                        if (pendingTextValue.isNotBlank()) {
+                                        if (pendingTextValue.isNotBlank() && texts.size < MAX_TEXTS) {
                                             texts = texts + TextAnnotation(texts.size.toLong(), at.x, at.y, pendingTextValue, color)
                                         }
                                         pendingTextAt = null
@@ -358,6 +361,16 @@ private fun AnnotationEditor(
                 scope.launch {
                     val flattenedImage = flattened()
                     val bytes = ByteArrayOutputStream().also { ImageIO.write(flattenedImage, "png", it) }.toByteArray()
+                    // Checked before base64 (which inflates ~1.33x, and ~2.66x again as a
+                    // UTF-16 String) so an oversized capture fails here instead of after a
+                    // long upload the server was always going to reject.
+                    if (bytes.size > MAX_IMAGE_BYTES) {
+                        sending = false
+                        val mb = bytes.size / (1024.0 * 1024.0)
+                        errorText = "Screenshot is too large to send (%.1f MB of %d MB) — capture a smaller region"
+                            .format(mb, MAX_IMAGE_BYTES / (1024 * 1024))
+                        return@launch
+                    }
                     val base64 = Base64.getEncoder().encodeToString(bytes)
                     api.shareScreenshot(
                         recipientId = recipient.userId,
@@ -594,14 +607,16 @@ private fun SendDialog(
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = note,
-                    onValueChange = { note = it },
+                    // 500 is the screenshot_shares_note_length CHECK -- enforced here so a
+                    // long note is a disabled keystroke, not a failed send.
+                    onValueChange = { if (it.length <= MAX_NOTE_LENGTH) note = it },
                     label = { Text("Note (optional)") },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it },
+                    onValueChange = { if (it.length <= MAX_PASSWORD_LENGTH) password = it },
                     label = { Text("Password (optional)") },
                     singleLine = true,
                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),

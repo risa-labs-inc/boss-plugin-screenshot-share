@@ -12,9 +12,13 @@ private const val ACTION_CAPTURE_FULL_SCREEN = "plugin.ai.rever.boss.plugin.dyna
 class ScreenshotShareDynamicPlugin : DynamicPlugin, ShortcutActionProvider {
     override val pluginId = "ai.rever.boss.plugin.dynamic.screenshotshare"
     override val displayName = "Secure Grab"
-    override val version = "0.1.0"
+
+    // processResources only rewrites plugin.json's version, not this constant, so
+    // this has to be bumped by hand alongside build.gradle.kts or the plugin
+    // self-reports a stale version to the host.
+    override val version = "0.1.4"
     override val description = "Capture, annotate, and send screenshots to teammates in your BOSS organisation."
-    override val author = "Your Name"
+    override val author = "Risa Labs"
     override val url = "https://github.com/risa-labs-inc/boss-plugin-screenshot-share"
 
     override val providerId = pluginId

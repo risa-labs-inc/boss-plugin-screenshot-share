@@ -18,6 +18,11 @@ import java.awt.image.BufferedImage
 import javax.swing.JPanel
 import javax.swing.JWindow
 import javax.swing.SwingUtilities
+import javax.swing.Timer
+
+/** How long to let the window manager actually remove the selection overlay
+ * before Robot reads the screen buffer. */
+private const val OVERLAY_SETTLE_MS = 60
 
 /**
  * Screen capture and drag-to-select region picking in plain AWT/Swing.
@@ -32,10 +37,18 @@ object ScreenshotCapture {
     // failed init isn't cached by `by lazy`, so the next capture attempt retries cleanly.
     private val robot by lazy { Robot() }
 
-    fun captureFullScreen(): BufferedImage {
-        val bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
-        return robot.createScreenCapture(bounds)
+    /** Union of every attached display. `maximumWindowBounds` would be the primary
+     * screen minus its taskbar, which silently cropped multi-monitor captures and
+     * disagreed with what [captureRegion]'s overlay spans. */
+    private fun virtualDesktopBounds(): Rectangle {
+        val bounds = Rectangle()
+        for (device in GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices) {
+            bounds.add(device.defaultConfiguration.bounds)
+        }
+        return bounds
     }
+
+    fun captureFullScreen(): BufferedImage = robot.createScreenCapture(virtualDesktopBounds())
 
     /**
      * Shows a click-drag overlay spanning the virtual desktop and suspends until
@@ -44,10 +57,7 @@ object ScreenshotCapture {
      */
     suspend fun captureRegion(): BufferedImage? = suspendCancellableCoroutine { cont ->
         SwingUtilities.invokeLater {
-            val virtualBounds = Rectangle()
-            for (device in GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices) {
-                virtualBounds.add(device.defaultConfiguration.bounds)
-            }
+            val virtualBounds = virtualDesktopBounds()
 
             val window = JWindow()
             window.bounds = virtualBounds
@@ -110,10 +120,15 @@ object ScreenshotCapture {
                         // still part of it until the window manager has actually removed it --
                         // hiding it in `finish()` (called with the capture already in hand) was
                         // too late, so every capture came out tinted by the selection dimming.
+                        //
+                        // The settle delay is a one-shot Timer, not Thread.sleep: this runs on
+                        // the EDT, so sleeping froze the entire host UI -- every plugin, not
+                        // just this one -- for the duration of every capture.
                         window.isVisible = false
                         Toolkit.getDefaultToolkit().sync()
-                        Thread.sleep(60)
-                        finish(runCatching { robot.createScreenCapture(screenRect) }.getOrNull())
+                        Timer(OVERLAY_SETTLE_MS) {
+                            finish(runCatching { robot.createScreenCapture(screenRect) }.getOrNull())
+                        }.apply { isRepeats = false }.start()
                     }
                 },
             )

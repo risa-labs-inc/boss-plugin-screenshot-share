@@ -61,10 +61,19 @@ fun AnnotationCanvas(
                     onDrag = { change, _ ->
                         val d = draft ?: return@detectDragGestures
                         val pt = change.position.x to change.position.y
-                        draft = if (tool == DrawTool.PEN) d.copy(points = d.points + pt) else d.copy(points = listOf(d.points.first(), pt))
+                        draft = if (tool == DrawTool.PEN) {
+                            val pts = d.points
+                            // Drop sub-pixel samples and stop at the cap. Appending
+                            // unconditionally re-copied the whole list per pointer event,
+                            // making one long stroke O(n^2).
+                            if (pts.size >= MAX_STROKE_POINTS || isTooClose(pts.last(), pt)) d
+                            else d.copy(points = pts + pt)
+                        } else {
+                            d.copy(points = listOf(d.points.first(), pt))
+                        }
                     },
                     onDragEnd = {
-                        draft?.let { currentOnActionsChange(currentActions + it) }
+                        draft?.let { if (currentActions.size < MAX_ACTIONS) currentOnActionsChange(currentActions + it) }
                         draft = null
                     },
                     onDragCancel = { draft = null },
@@ -76,6 +85,12 @@ fun AnnotationCanvas(
         actions.forEach { drawMark(it) }
         draft?.let { drawMark(it) }
     }
+}
+
+private fun isTooClose(last: Pair<Float, Float>, next: Pair<Float, Float>): Boolean {
+    val dx = next.first - last.first
+    val dy = next.second - last.second
+    return dx * dx + dy * dy < MIN_POINT_DISTANCE_PX * MIN_POINT_DISTANCE_PX
 }
 
 private fun DrawScope.drawMark(action: DrawAction) {

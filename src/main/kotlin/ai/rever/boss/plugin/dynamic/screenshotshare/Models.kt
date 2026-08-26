@@ -2,6 +2,31 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import androidx.compose.ui.graphics.Color
 
+/** Mirrors the 8MB `screenshot_shares_image_size` CHECK and share_screenshot()'s
+ * own guard, so an oversized capture fails locally before it is base64-inflated
+ * and shipped only to be refused server-side. */
+const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+/** Matches share_screenshot()'s server-side length guard. */
+const val MAX_PASSWORD_LENGTH = 128
+
+/** Matches the `screenshot_shares_note_length` CHECK. */
+const val MAX_NOTE_LENGTH = 500
+
+/** Baked into the flattened image, so this only bounds the in-memory string. */
+const val MAX_TEXT_LENGTH = 200
+
+/** Ceilings on annotation growth. Every mark is re-walked on each export
+ * ([flattenAnnotations]) and re-drawn each frame, so these bound both. */
+const val MAX_STROKE_POINTS = 2_000
+const val MAX_ACTIONS = 500
+const val MAX_TEXTS = 200
+
+/** Pen samples closer than this to the previous point are dropped: a drag emits
+ * far more events than the stroke needs, and each one used to copy the whole
+ * point list. */
+const val MIN_POINT_DISTANCE_PX = 2f
+
 enum class DrawTool { PEN, RECTANGLE, ARROW, TEXT }
 
 /** A single freehand/rectangle/arrow mark. TEXT is handled separately as [TextAnnotation] --

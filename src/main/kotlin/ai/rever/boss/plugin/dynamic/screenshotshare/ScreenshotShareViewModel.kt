@@ -1,7 +1,9 @@
 package ai.rever.boss.plugin.dynamic.screenshotshare
 
 import ai.rever.boss.plugin.api.PluginContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,13 +16,38 @@ import javax.imageio.ImageIO
 
 private const val POLL_INTERVAL_MS = 25_000L
 
+// Failed polls back off exponentially from the normal interval and cap out at 5
+// minutes, so an outage (or broken auth) degrades to ~12 calls/hour instead of
+// every client hammering at the healthy rate for as long as it lasts.
+private const val MAX_POLL_BACKOFF_MS = 5 * 60_000L
+
 /** State for the password-entry dialog shown when opening a protected [ReceivedScreenshot].
  * [errorMessage] is null on first prompt and set after a wrong-password retry. */
 data class PasswordPrompt(val shareId: String, val errorMessage: String? = null)
 
-/** Holds inbox/sent state and polls for new shares -- plugins get no realtime
- * channel, so polling on [PluginContext.pluginScope] (lifecycle-tied, outlives
- * any single panel composition) is the only delivery signal available. */
+/**
+ * Poll delay after [consecutiveFailures] failed attempts: the healthy interval
+ * while things work, then doubling up to [MAX_POLL_BACKOFF_MS].
+ *
+ * The shift distance is clamped before shifting because Kotlin masks it to 6
+ * bits -- an unclamped `shl 64` is a no-op and would silently collapse the
+ * backoff back to the base interval (same trap documented in plugin-manager's
+ * `backoffMillis`).
+ */
+internal fun pollDelayMs(consecutiveFailures: Int): Long {
+    if (consecutiveFailures <= 0) return POLL_INTERVAL_MS
+    val step = (consecutiveFailures - 1).coerceAtMost(16)
+    return (POLL_INTERVAL_MS shl step).coerceAtMost(MAX_POLL_BACKOFF_MS)
+}
+
+/**
+ * Holds inbox/sent state and polls for new shares -- plugins get no realtime
+ * channel, so polling is the only delivery signal available.
+ *
+ * The loop runs on [PluginContext.pluginScope], which outlives any single panel
+ * composition, so the panel cancels it via [dispose] on destroy; otherwise it
+ * would keep issuing RPCs for the plugin's whole lifetime with no panel open.
+ */
 class ScreenshotShareViewModel(
     private val context: PluginContext,
     private val api: ScreenshotShareApi,
@@ -44,28 +71,54 @@ class ScreenshotShareViewModel(
     private val _passwordPrompt = MutableStateFlow<PasswordPrompt?>(null)
     val passwordPrompt: StateFlow<PasswordPrompt?> = _passwordPrompt.asStateFlow()
 
-    private var started = false
+    private var pollJob: Job? = null
 
     // Null until the first successful poll, so opening the inbox never toasts
     // for shares that were already sitting there before this session started.
     private var knownReceivedIds: Set<String>? = null
 
     fun startPolling() {
-        if (started) return
-        started = true
-        scope.launch {
+        if (pollJob?.isActive == true) return
+        pollJob = scope.launch {
+            var consecutiveFailures = 0
             while (true) {
-                refresh()
-                delay(POLL_INTERVAL_MS)
+                val ok = refreshReceived()
+                consecutiveFailures = if (ok) 0 else consecutiveFailures + 1
+                delay(pollDelayMs(consecutiveFailures))
             }
         }
+    }
+
+    /**
+     * Cancels the poll loop. Called from the panel's `doOnDestroy`: this
+     * ViewModel is created once per plugin and shared by every panel instance,
+     * so this only stops the loop -- state is left intact and [startPolling]
+     * restarts cleanly when a panel is reopened.
+     */
+    fun dispose() {
+        pollJob?.cancel()
+        pollJob = null
     }
 
     fun refreshAsync() {
         scope.launch { refresh() }
     }
 
+    /** Both lists. Used after sending, where the Sent tab's contents just changed. */
     suspend fun refresh() {
+        refreshReceived()
+        refreshSent()
+    }
+
+    /**
+     * Polls the inbox only -- the Sent tab is fetched on demand by
+     * [refreshSent], since polling it too doubled steady-state RPC volume for a
+     * list that is only rendered on one of two tabs.
+     *
+     * Returns false if the call failed, which drives the poll backoff.
+     */
+    suspend fun refreshReceived(): Boolean {
+        var ok = true
         api.listReceived()
             .onSuccess { list ->
                 notifyNewArrivals(list)
@@ -73,8 +126,19 @@ class ScreenshotShareViewModel(
                 _unreadCount.value = list.count { s -> s.isUnread }
                 _loadError.value = null
             }
-            .onFailure { _loadError.value = it.message }
+            .onFailure {
+                if (it is CancellationException) throw it
+                _loadError.value = it.message
+                ok = false
+            }
+        return ok
+    }
 
+    fun refreshSentAsync() {
+        scope.launch { refreshSent() }
+    }
+
+    suspend fun refreshSent() {
         api.listSent().onSuccess { _sent.value = it }
     }
 
@@ -139,7 +203,8 @@ class ScreenshotShareViewModel(
                             val image = runCatching { ImageIO.read(ByteArrayInputStream(bytes)) }.getOrNull()
                             if (image != null) openViewerWindow(image)
                             _passwordPrompt.value = null
-                            refresh()
+                            // read_at just flipped server-side; re-read the inbox for the badge.
+                            refreshReceived()
                         }
                         ImageFetchResult.PasswordRequired ->
                             _passwordPrompt.value = PasswordPrompt(shareId)
