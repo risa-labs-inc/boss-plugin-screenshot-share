@@ -13,6 +13,9 @@ const val MAX_PASSWORD_LENGTH = 128
 /** Matches the `screenshot_shares_note_length` CHECK. */
 const val MAX_NOTE_LENGTH = 500
 
+/** The largest page list_shareable_recipients will serve (its own LEAST(...,200) clamp). */
+const val RECIPIENT_PAGE_SIZE = 200
+
 /** Baked into the flattened image, so this only bounds the in-memory string. */
 const val MAX_TEXT_LENGTH = 200
 

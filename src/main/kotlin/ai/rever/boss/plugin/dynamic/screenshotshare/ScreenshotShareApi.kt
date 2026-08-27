@@ -52,7 +52,11 @@ class ScreenshotShareApi(private val context: PluginContext) {
             "list_shareable_recipients",
             buildJsonObject {
                 put("p_query", query)
-                put("p_limit", 50)
+                // The server clamps this to 200. Asking for 50 silently hid people:
+                // a caller in orgs of 135 + 80 has ~215 reachable co-members, so the
+                // page has to be as large as allowed AND the query has to be pushed
+                // server-side -- 200 alone still does not cover everyone.
+                put("p_limit", RECIPIENT_PAGE_SIZE)
             },
         ).mapCatching { obj ->
             requireSuccess(obj)["data"]!!.jsonArray.map { el ->

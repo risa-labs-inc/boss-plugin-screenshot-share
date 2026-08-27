@@ -93,6 +93,7 @@ import compose.icons.feathericons.Type
 import compose.icons.feathericons.Users
 import compose.icons.feathericons.X
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.HeadlessException
 import java.awt.Toolkit
@@ -576,6 +577,9 @@ private fun RainbowSwatch(selected: Boolean, onClick: () -> Unit) {
 /** Beyond this many recipients the list needs a filter to be usable. */
 private const val RECIPIENT_SEARCH_THRESHOLD = 8
 
+/** Quiet period before a keystroke becomes a query. */
+private const val SEARCH_DEBOUNCE_MS = 300L
+
 @Composable
 private fun SendDialog(
     api: ScreenshotShareApi,
@@ -586,10 +590,13 @@ private fun SendDialog(
 ) {
     var recipients by remember { mutableStateOf(listOf<Recipient>()) }
     var loading by remember { mutableStateOf(true) }
-    // Keyed by userId, not the Recipient itself: list_shareable_recipients
-    // returns one row per user, but org_id rides along on it, so identity
-    // comparison would let the same person be picked twice.
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var searching by remember { mutableStateOf(false) }
+    // The whole Recipient is retained, not just its id, because searching
+    // replaces `recipients` server-side -- deriving the send list from the
+    // current results would silently drop anyone ticked under an earlier query.
+    // Keyed by userId: one row per user, but org_id rides along on it, so
+    // identity comparison would let the same person be picked twice.
+    var selectedById by remember { mutableStateOf(mapOf<String, Recipient>()) }
     var message by remember { mutableStateOf("") }
     var secure by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
@@ -597,57 +604,62 @@ private fun SendDialog(
     var query by remember { mutableStateOf("") }
     var loadError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        api.listShareableRecipients()
-            .onSuccess { recipients = it; loading = false }
-            .onFailure { loadError = it.message; loading = false }
-    }
-
-    // Filtered client-side: the server already caps this list at p_limit (50), so
-    // there is nothing to gain from a debounced RPC per keystroke. Past that cap
-    // the server-side p_query would be needed -- it exists and now matches
-    // display names as well as emails, but wiring it means per-keystroke calls.
-    val visible = remember(recipients, query) {
-        if (query.isBlank()) {
-            recipients
-        } else {
-            recipients.filter {
-                it.displayName.contains(query, ignoreCase = true) ||
-                    it.email.contains(query, ignoreCase = true)
-            }
+    // Search goes to the SERVER, not over the loaded page. A caller in orgs of
+    // 135 + 80 has more reachable co-members than the 200-row cap can return, so
+    // filtering locally left people permanently unreachable no matter what was
+    // typed. Keying the effect on `query` gives the debounce for free: a new
+    // keystroke cancels the previous coroutine before its delay elapses.
+    LaunchedEffect(query) {
+        val trimmed = query.trim()
+        if (trimmed.isNotEmpty()) {
+            delay(SEARCH_DEBOUNCE_MS)
+            searching = true
         }
+        api.listShareableRecipients(trimmed.ifBlank { null })
+            .onSuccess { recipients = it; loadError = null }
+            .onFailure { loadError = it.message }
+        searching = false
+        loading = false
     }
 
     // Ticking Secure and leaving the field empty would otherwise send an
     // unprotected screenshot to someone the sender believes has to unlock it.
     val passwordMissing = secure && password.isBlank()
 
+    // Stays visible once typing starts: gating purely on result count would hide
+    // the box the moment a query narrowed the list below the threshold.
+    val showSearch = recipients.size > RECIPIENT_SEARCH_THRESHOLD || query.isNotBlank()
+
     BossDialog(onDismissRequest = onDismiss) {
         // Width on a wrapper: BossCard applies fillMaxWidth() after the modifier
         // it is handed, so sizing it directly would be overridden.
         Box(Modifier.width(420.dp)) {
             BossCard {
-                SendDialogHeader(selectedCount = selectedIds.size, onClose = onDismiss)
+                SendDialogHeader(selectedCount = selectedById.size, onClose = onDismiss)
 
                 Spacer(Modifier.height(14.dp))
                 Divider(color = BossThemeColors.BorderColor.copy(alpha = 0.6f))
                 Spacer(Modifier.height(14.dp))
 
                 SectionLabel("RECIPIENTS") {
-                    if (selectedIds.isNotEmpty()) {
+                    if (searching) {
+                        CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    if (selectedById.isNotEmpty()) {
                         Text(
                             "Clear",
                             color = BossThemeColors.TextSecondary,
                             fontSize = 11.sp,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .clickable { selectedIds = emptySet() }
+                                .clickable { selectedById = emptyMap() }
                                 .padding(horizontal = 4.dp, vertical = 2.dp),
                         )
                     }
                 }
 
-                if (recipients.size > RECIPIENT_SEARCH_THRESHOLD) {
+                if (showSearch) {
                     BossSearchBar(
                         query = query,
                         onQueryChange = { query = it },
@@ -664,32 +676,46 @@ private fun SendDialog(
                         }
                     loadError != null ->
                         Text(loadError ?: "", color = BossThemeColors.ErrorColor, fontSize = 12.sp)
+                    // Query-first: an empty RESULT is not the same claim as an
+                    // empty directory, and saying "no teammates" to someone who
+                    // just mistyped a name is a lie they cannot debug.
+                    recipients.isEmpty() && query.isNotBlank() ->
+                        Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.Center) {
+                            Text("No one matches \"$query\"", color = BossThemeColors.TextMuted, fontSize = 12.sp)
+                        }
                     recipients.isEmpty() ->
                         BossEmptyState(
                             icon = FeatherIcons.Users,
                             message = "No teammates yet",
                             description = "You can only send to people who share an organisation with you.",
                         )
-                    visible.isEmpty() ->
-                        Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.Center) {
-                            Text("No one matches \"$query\"", color = BossThemeColors.TextMuted, fontSize = 12.sp)
-                        }
                     else ->
                         LazyColumn(Modifier.heightIn(max = 208.dp)) {
-                            items(visible, key = { it.userId }) { r ->
+                            items(recipients, key = { it.userId }) { r ->
                                 RecipientRow(
                                     recipient = r,
-                                    checked = r.userId in selectedIds,
+                                    checked = r.userId in selectedById,
                                     onToggle = {
-                                        selectedIds = if (r.userId in selectedIds) {
-                                            selectedIds - r.userId
+                                        selectedById = if (r.userId in selectedById) {
+                                            selectedById - r.userId
                                         } else {
-                                            selectedIds + r.userId
+                                            selectedById + (r.userId to r)
                                         }
                                     },
                                 )
                             }
                         }
+                }
+
+                // The server caps the page, so a full list can be truncated. Say so
+                // rather than letting someone conclude a colleague is unreachable.
+                if (query.isBlank() && recipients.size >= RECIPIENT_PAGE_SIZE) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Showing the first $RECIPIENT_PAGE_SIZE - search to find anyone else",
+                        color = BossThemeColors.TextMuted,
+                        fontSize = 10.sp,
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -754,15 +780,15 @@ private fun SendDialog(
                         }
                     } else {
                         BossPrimaryButton(
-                            text = if (selectedIds.size > 1) "Send (${selectedIds.size})" else "Send",
-                            enabled = selectedIds.isNotEmpty() && !passwordMissing,
+                            text = if (selectedById.size > 1) "Send (${selectedById.size})" else "Send",
+                            enabled = selectedById.isNotEmpty() && !passwordMissing,
                             icon = FeatherIcons.Send,
                             onClick = {
                                 onSend(
-                                    // Filtered from `recipients`, not `visible`: a search
-                                    // term left in the box must not silently drop someone
-                                    // already ticked.
-                                    recipients.filter { it.userId in selectedIds },
+                                    // Straight from the selection map, never re-derived
+                                    // from the current results: a search term left in the
+                                    // box must not drop someone ticked under an earlier one.
+                                    selectedById.values.toList(),
                                     message,
                                     // Gated on `secure`, so unticking genuinely removes
                                     // protection even though the typed text is kept.
