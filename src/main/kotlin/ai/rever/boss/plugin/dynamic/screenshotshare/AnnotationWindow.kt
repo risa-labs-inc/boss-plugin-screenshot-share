@@ -389,6 +389,11 @@ private fun AnnotationEditor(
                     // recipient, so a fan-out is N calls but must not be N encodes.
                     val base64 = Base64.getEncoder().encodeToString(bytes)
                     val failed = mutableListOf<String>()
+                    // Kept alongside the names: reporting only who failed turned a
+                    // precise server message ("Could not find the function
+                    // public.share_screenshot(...) in the schema cache") into a bare
+                    // "Failed to send", which is undiagnosable from the UI.
+                    var reason: String? = null
                     for (recipient in recipients) {
                         api.shareScreenshot(
                             recipientId = recipient.userId,
@@ -398,18 +403,22 @@ private fun AnnotationEditor(
                             height = flattenedImage.height,
                             note = note.ifBlank { null },
                             password = password,
-                        ).onFailure { failed += recipient.displayName }
+                        ).onFailure {
+                            failed += recipient.displayName
+                            if (reason == null) reason = it.message
+                        }
                     }
                     sending = false
+                    val because = reason?.let { ": $it" } ?: ""
                     when {
                         // Partial success is reported rather than swallowed: the
                         // recipients who did receive it keep their copy, so silently
                         // succeeding would leave the sender unaware of the gap.
                         failed.isEmpty() -> onSent(recipients.size)
                         failed.size == recipients.size ->
-                            errorText = "Failed to send to ${failed.joinToString(", ")}"
+                            errorText = "Failed to send to ${failed.joinToString(", ")}$because"
                         else ->
-                            errorText = "Sent to ${recipients.size - failed.size} of ${recipients.size} — failed for ${failed.joinToString(", ")}"
+                            errorText = "Sent to ${recipients.size - failed.size} of ${recipients.size} — failed for ${failed.joinToString(", ")}$because"
                     }
                 }
             },
