@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.dynamic.screenshotshare
 import ai.rever.boss.plugin.api.PluginContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -27,8 +28,31 @@ class ScreenshotShareApi(private val context: PluginContext) {
     private suspend fun rpc(function: String, params: JsonObject): Result<JsonObject> {
         val provider = context.supabaseDataProvider
             ?: return Result.failure(IllegalStateException("Supabase is not available to this plugin"))
-        return provider.rpc(function, params.toString()).mapCatching { raw ->
-            Json.parseToJsonElement(raw).jsonObject
+        return provider.rpc(function, params.toString())
+            .mapCatching { raw -> Json.parseToJsonElement(raw).jsonObject }
+            .recoverCatching { throw IllegalStateException(describeFailure(function, it), it) }
+    }
+
+    /**
+     * Rewrites a schema-cache miss into something the person looking at the
+     * dialog can act on.
+     *
+     * A plugin release and a database migration ship separately, so a plugin can
+     * legitimately be newer than the schema it is calling. PostgREST reports
+     * that as `Could not find the function public.x(...) in the schema cache`,
+     * which is precise but unreadable in a send dialog and tells the reader
+     * nothing about what to do. Everything else is passed through untouched --
+     * the server's own errors ("Recipient does not share an organisation with
+     * you") are already the better message.
+     */
+    private fun describeFailure(function: String, cause: Throwable): String {
+        val message = cause.message ?: return "$function failed"
+        val schemaMiss = "Could not find the function" in message || "schema cache" in message
+        return if (schemaMiss) {
+            "This BOSS database is missing an update that $function needs - " +
+                "ask an admin to apply the latest screenshot_shares migration"
+        } else {
+            message
         }
     }
 
@@ -47,11 +71,28 @@ class ScreenshotShareApi(private val context: PluginContext) {
 
     private fun JsonObject.boolOrFalse(key: String): Boolean = this[key]?.jsonPrimitive?.booleanOrNull ?: false
 
+    /**
+     * Adds an OPTIONAL rpc argument only when it carries a value.
+     *
+     * PostgREST resolves a function by the SET of argument names supplied, so
+     * `put(key, null)` is emphatically not the same as omitting the key: a name
+     * the deployed function does not declare makes the call match nothing and
+     * come back as `Could not find the function public.x(...) in the schema
+     * cache`, while omitting a parameter that has a DEFAULT always resolves.
+     *
+     * Sending nulls is what broke every send when p_password was added ahead of
+     * its migration. Omitting them is both the fix and the more correct call:
+     * "no value" is exactly what a SQL DEFAULT is for.
+     */
+    private fun JsonObjectBuilder.putIfPresent(key: String, value: String?) {
+        if (value != null) put(key, value)
+    }
+
     suspend fun listShareableRecipients(query: String? = null): Result<List<Recipient>> =
         rpc(
             "list_shareable_recipients",
             buildJsonObject {
-                put("p_query", query)
+                putIfPresent("p_query", query)
                 // The server clamps this to 200. Asking for 50 silently hid people:
                 // a caller in orgs of 135 + 80 has ~215 reachable co-members, so the
                 // page has to be as large as allowed AND the query has to be pushed
@@ -88,8 +129,8 @@ class ScreenshotShareApi(private val context: PluginContext) {
                 put("p_mime_type", mimeType)
                 put("p_width", width)
                 put("p_height", height)
-                put("p_note", note)
-                put("p_password", password)
+                putIfPresent("p_note", note)
+                putIfPresent("p_password", password)
             },
         ).mapCatching { obj ->
             requireSuccess(obj).strOrNull("share_id") ?: error("Missing share_id in response")
@@ -156,7 +197,7 @@ class ScreenshotShareApi(private val context: PluginContext) {
             "get_screenshot_image",
             buildJsonObject {
                 put("p_share_id", shareId)
-                put("p_password", password)
+                putIfPresent("p_password", password)
             },
         ).mapCatching { obj ->
             if (obj.boolOrFalse("success")) {
