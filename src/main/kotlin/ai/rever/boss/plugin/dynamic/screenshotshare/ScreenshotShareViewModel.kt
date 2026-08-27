@@ -200,9 +200,25 @@ class ScreenshotShareViewModel(
                 .onSuccess { result ->
                     when (result) {
                         is ImageFetchResult.Success -> {
-                            val bytes = Base64.getDecoder().decode(result.imageBase64)
-                            val image = runCatching { ImageIO.read(ByteArrayInputStream(bytes)) }.getOrNull()
-                            if (image != null) openViewerWindow(image)
+                            // The decode is INSIDE runCatching, and uses the MIME decoder:
+                            // Postgres encode(bytea,'base64') emits RFC 2045, which wraps a
+                            // newline every 76 characters, and the strict decoder rejects
+                            // those ("Illegal base64 character a" -- 0x0a). It threw straight
+                            // out of this coroutine, so every attempt to open a screenshot
+                            // was an uncaught plugin exception; five of them tripped the
+                            // watchdog into restarting the plugin.
+                            val image = runCatching {
+                                val bytes = Base64.getMimeDecoder().decode(result.imageBase64)
+                                ImageIO.read(ByteArrayInputStream(bytes))
+                            }.getOrNull()
+                            if (image == null) {
+                                context.notificationProvider?.showError(
+                                    "Couldn't open screenshot",
+                                    "The image data could not be decoded",
+                                )
+                            } else {
+                                openViewerWindow(image)
+                            }
                             _passwordPrompt.value = null
                             // read_at just flipped server-side; re-read the inbox for the badge.
                             refreshReceived()
